@@ -9,7 +9,7 @@ INCLUDES := -I$(OUTPUT)
 CFLAGS := -g -Wall
 ARCH := $(shell uname -m | sed 's/x86_64/x86/')
 
-APPS = emadlatency emadump trapagg
+APPS = emadlatency emadump trapagg resmon
 
 COMMON_OBJ = \
 	$(OUTPUT)/trace_helpers.o \
@@ -73,12 +73,18 @@ $(OUTPUT)/%.skel.h: $(OUTPUT)/%.bpf.o | $(OUTPUT)
 # Build user-space code
 $(patsubst %,$(OUTPUT)/%.o,$(APPS)): %.o: %.skel.h
 
-$(OUTPUT)/%.o: %.c $(wildcard %.h) | $(OUTPUT)
+$(OUTPUT)/%.o: %.c | $(OUTPUT)
 	$(call msg,CC,$@)
 	$(Q)$(CC) $(CFLAGS) $(INCLUDES) -c $(filter %.c,$^) -o $@
 
+$(OUTPUT)/emadlatency.o: emadlatency.h
+$(OUTPUT)/emadlatency.bpf.o: emadlatency.h
+
+$(OUTPUT)/resmon.o: resmon.h
+$(OUTPUT)/resmon.bpf.o: resmon.h
+
 # Build application binary
-emadlatency trapagg: %: $(OUTPUT)/%.o $(LIBBPF_OBJ) $(COMMON_OBJ) | $(OUTPUT)
+emadlatency trapagg resmon: %: $(OUTPUT)/%.o $(LIBBPF_OBJ) $(COMMON_OBJ) | $(OUTPUT) $(OUTPUT)/%.bpf.o
 	$(call msg,BINARY,$@)
 	$(Q)$(CC) $(CFLAGS) $^ -lelf -lz -o $@
 
