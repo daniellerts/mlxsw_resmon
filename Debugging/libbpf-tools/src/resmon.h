@@ -11,7 +11,8 @@
 
 #define RESMON_COUNTERS(X) \
 	X(LPM_IPV4, "IPv4 LPM") \
-	X(LPM_IPV6, "IPv6 LPM")
+	X(LPM_IPV6, "IPv6 LPM") \
+	X(ATCAM, "ATCAM")
 
 enum resmon_counter {
 	RESMON_COUNTERS(RESMON_COUNTER_EXPAND_AS_ENUM)
@@ -28,6 +29,19 @@ struct ralue_key {
 	__u8 prefix_len;
 	__u16 virtual_router;
 	__u8 dip[16];
+};
+
+struct ptar_key {
+	__u8 tcam_region_info[16];
+};
+
+struct ptce3_key {
+	__u8 tcam_region_info[16];
+	__u8 flex2_key_blocks[96];
+	__u8 delta_mask;
+	__u8 delta_value;
+	__u16 delta_start;
+	__u8 erp_id;
 };
 
 #endif /* RESMON_H */

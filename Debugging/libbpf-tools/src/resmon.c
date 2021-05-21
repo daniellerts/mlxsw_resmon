@@ -176,8 +176,20 @@ static int resmon_bpf_pin(struct resmon_bpf *obj, const char *bpffs)
 	if (err)
 		goto unpin_counters;
 
+	err = resmon_bpf_pin_map(obj->maps.ptar, bpffs, "ptar");
+	if (err)
+		goto unpin_ralue;
+
+	err = resmon_bpf_pin_map(obj->maps.ptce3, bpffs, "ptce3");
+	if (err)
+		goto unpin_ptar;
+
 	return 0;
 
+unpin_ptar:
+	bpf_map__unpin(obj->maps.ptar, NULL);
+unpin_ralue:
+	bpf_map__unpin(obj->maps.ralue, NULL);
 unpin_counters:
 	bpf_map__unpin(obj->maps.counters, NULL);
 unpin_link:
@@ -214,11 +226,6 @@ static int resmon_bpf_restore(struct resmon_bpf *obj, const char *bpffs)
 
 	err = resmon_bpf_restore_map(obj->maps.counters,
 				     resmon_pin_path(bpffs, "counters"));
-	if (err)
-		return err;
-
-	err = resmon_bpf_restore_map(obj->maps.ralue,
-				     resmon_pin_path(bpffs, "ralue"));
 	if (err)
 		return err;
 
@@ -322,6 +329,10 @@ static int resmon_stop_main(int argc, char **argv)
 	resmon_check_rc(unlink, resmon_pin_path(env.bpffs, "counters"), &status,
 			&fail_errno, &fail_path);
 	resmon_check_rc(unlink, resmon_pin_path(env.bpffs, "ralue"), &status,
+			&fail_errno, &fail_path);
+	resmon_check_rc(unlink, resmon_pin_path(env.bpffs, "ptce3"), &status,
+			&fail_errno, &fail_path);
+	resmon_check_rc(unlink, resmon_pin_path(env.bpffs, "ptar"), &status,
 			&fail_errno, &fail_path);
 	resmon_check_rc(rmdir, resmon_pin_path(env.bpffs, ""), &status,
 			&fail_errno, &fail_path);

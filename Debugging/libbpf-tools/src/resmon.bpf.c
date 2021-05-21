@@ -64,6 +64,64 @@ struct reg_ralue {
 	};
 };
 
+struct reg_ptar {
+	u8 __op_e;
+	u8 action_set_type;
+	u8 resv1;
+	u8 key_type;
+
+#define reg_ptar_op(reg) ((reg).__op_e >> 4)
+
+	__be16 resv2;
+	__be16 __region_size;
+
+	__be16 resv3;
+	__be16 __region_id;
+
+	__be16 resv4;
+	u8 __dup_opt;
+	u8 __packet_rate;
+
+	u8 tcam_region_info[16];
+	u8 flexible_keys[16];
+};
+
+struct reg_ptce3 {
+	u8 __v_a;
+	u8 __op;
+	u8 resv1;
+	u8 __dup;
+
+#define reg_ptce3_v(reg) ((reg).__v_a >> 7)
+#define reg_ptce3_op(reg) (((reg).__op >> 4) & 7)
+
+	__be32 __priority;
+
+	__be32 resv2;
+
+	__be32 resv3;
+
+	u8 tcam_region_info[16];
+
+	u8 flex2_key_blocks[96];
+
+	__be16 resv4;
+	u8 resv5;
+	u8 __erp_id;
+
+#define reg_ptce3_erp_id(reg) ((reg).__erp_id & 0xf)
+
+	__be16 resv6;
+	__be16 __delta_start;
+
+#define reg_ptce3_delta_start(reg) (bpf_ntohs((reg).__delta_start) & 0x3ff)
+
+	u8 resv7;
+	u8 delta_mask;
+	u8 resv8;
+	u8 delta_value;
+};
+
 static struct emad_tlv_head emad_tlv_decode_header(__be16 type_len_be)
 {
 	u16 type_len = bpf_ntohs(type_len_be);
@@ -80,6 +138,20 @@ struct {
 	__type(key, struct ralue_key);
 	__type(value, struct kvd_allocation);
 } ralue SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, 102400/*xxx*/);
+	__type(key, struct ptar_key);
+	__type(value, struct kvd_allocation);
+} ptar SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, 102400/*xxx*/);
+	__type(key, struct ptce3_key);
+	__type(value, struct kvd_allocation);
+} ptce3 SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
@@ -144,6 +216,121 @@ static int handle_ralue(const u8 *payload)
 	}
 
 	return 0;
+}
+
+static int handle_ptar_alloc(struct reg_ptar *reg, struct ptar_key *hkey)
+{
+	/* This needs to be volatile to prevent some odd interaction
+	 * between the compiler and verifier. The latter rejects the
+	 * program otherwise. */
+	volatile unsigned int nkeys = 0;
+	for (unsigned int i = 0; i < sizeof reg->flexible_keys; i++)
+		if (reg->flexible_keys[i])
+			nkeys++;
+
+	struct kvd_allocation kvda = {
+		.slots = nkeys >= 12 ? 4 :
+			 nkeys >= 4  ? 2 : 1,
+		.counter = RESMON_COUNTER_ATCAM,
+	};
+
+	bpf_map_update_elem(&ptar, hkey, &kvda, BPF_NOEXIST);
+	return 0;
+}
+
+static int handle_ptar_free(struct ptar_key *hkey)
+{
+	bpf_map_delete_elem(&ptar, hkey);
+	return 0;
+}
+
+static int handle_ptar(const u8 *payload)
+{
+	struct reg_ptar reg;
+	bpf_core_read(&reg, sizeof reg, payload);
+
+	switch (reg.key_type) {
+	case MLXSW_REG_PTAR_KEY_TYPE_FLEX:
+	case MLXSW_REG_PTAR_KEY_TYPE_FLEX2:
+		break;
+	default:
+		return 0;
+	}
+
+	struct ptar_key hkey;
+	__builtin_memcpy(hkey.tcam_region_info, reg.tcam_region_info,
+			 sizeof reg.tcam_region_info);
+
+	switch (reg_ptar_op(reg)) {
+		int rc;
+	case MLXSW_REG_PTAR_OP_RESIZE:
+	case MLXSW_REG_PTAR_OP_TEST:
+		return 0;
+	case MLXSW_REG_PTAR_OP_ALLOC:
+		return handle_ptar_alloc(&reg, &hkey);
+	case MLXSW_REG_PTAR_OP_FREE:
+		return handle_ptar_free(&hkey);
+	}
+
+	return 0;
+}
+
+static int handle_ptce3_alloc(const struct ptce3_key *hkey)
+{
+	struct ptar_key ptar_key;
+	__builtin_memcpy(ptar_key.tcam_region_info, hkey->tcam_region_info,
+			 sizeof ptar_key.tcam_region_info);
+
+	struct kvd_allocation *kvda = bpf_map_lookup_elem(&ptar, &ptar_key);
+	if (!kvda)
+		return 0;
+
+	int rc = bpf_map_update_elem(&ptce3, hkey, kvda, BPF_NOEXIST);
+	if (!rc)
+		counter_inc(kvda);
+
+	return 0;
+}
+
+static int handle_ptce3_free(const struct ptce3_key *hkey)
+{
+	struct kvd_allocation *kvda = bpf_map_lookup_elem(&ptce3, hkey);
+	if (!kvda)
+		return 0;
+
+	bpf_map_delete_elem(&ptce3, hkey);
+	counter_dec(kvda);
+	return 0;
+}
+
+static int handle_ptce3(const u8 *payload)
+{
+	struct reg_ptce3 reg;
+	bpf_core_read(&reg, sizeof reg, payload);
+
+	switch (reg_ptce3_op(reg)) {
+	case MLXSW_REG_PTCE3_OP_WRITE_WRITE:
+	case MLXSW_REG_PTCE3_OP_WRITE_UPDATE:
+		break;
+	default:
+		return 0;
+	}
+
+	struct ptce3_key hkey = {
+		.erp_id = reg_ptce3_erp_id(reg),
+		.delta_start = reg_ptce3_delta_start(reg),
+		.delta_mask = reg.delta_mask,
+		.delta_value = reg.delta_value,
+	};
+	__builtin_memcpy(hkey.tcam_region_info, reg.tcam_region_info,
+			 sizeof reg.tcam_region_info);
+	__builtin_memcpy(hkey.flex2_key_blocks, reg.flex2_key_blocks,
+			 sizeof reg.flex2_key_blocks);
+
+	if (reg_ptce3_v(reg))
+		return handle_ptce3_alloc(&hkey);
+	else
+		return handle_ptce3_free(&hkey);
 }
 
 inline bool is_mlxsw_spectrum(struct devlink *devlink)
@@ -212,6 +399,10 @@ int BPF_PROG(handle__devlink_hwmsg,
 	switch (bpf_ntohs(op_tlv.reg_id)) {
 	case 0x8013: /* MLXSW_REG_RALUE_ID */
 		return handle_ralue(buf);
+	case 0x3006: /* MLXSW_REG_PTAR_ID */
+		return handle_ptar(buf);
+	case 0x3027: /* MLXSW_REG_PTCE3_ID */
+		return handle_ptce3(buf);
 	}
 
 	return 0;
