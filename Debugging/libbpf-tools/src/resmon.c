@@ -184,8 +184,14 @@ static int resmon_bpf_pin(struct resmon_bpf *obj, const char *bpffs)
 	if (err)
 		goto unpin_ptar;
 
+	err = resmon_bpf_pin_map(obj->maps.kvdl, bpffs, "kvdl");
+	if (err)
+		goto unpin_ptce3;
+
 	return 0;
 
+unpin_ptce3:
+	bpf_map__unpin(obj->maps.ptce3, NULL);
 unpin_ptar:
 	bpf_map__unpin(obj->maps.ptar, NULL);
 unpin_ralue:
@@ -333,6 +339,8 @@ static int resmon_stop_main(int argc, char **argv)
 	resmon_check_rc(unlink, resmon_pin_path(env.bpffs, "ptce3"), &status,
 			&fail_errno, &fail_path);
 	resmon_check_rc(unlink, resmon_pin_path(env.bpffs, "ptar"), &status,
+			&fail_errno, &fail_path);
+	resmon_check_rc(unlink, resmon_pin_path(env.bpffs, "kvdl"), &status,
 			&fail_errno, &fail_path);
 	resmon_check_rc(rmdir, resmon_pin_path(env.bpffs, ""), &status,
 			&fail_errno, &fail_path);

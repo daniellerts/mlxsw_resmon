@@ -122,6 +122,40 @@ struct reg_ptce3 {
 	u8 delta_value;
 };
 
+struct reg_pefa {
+	__be32 __pind_index;
+
+#define reg_pefa_index(reg) (bpf_ntohl((reg).__pind_index) & 0xffffff)
+};
+
+struct reg_iedr_record {
+	u8 type;
+	u8 resv1;
+	__be16 __size;
+
+#define reg_iedr_record_size(rec) (bpf_ntohs((rec).__size))
+
+	__be32 __index_start;
+
+#define reg_iedr_record_index_start(rec) \
+	(bpf_ntohl((rec).__index_start) & 0xffffff)
+};
+
+struct reg_iedr {
+	u8 __bg;
+	u8 resv1;
+	u8 resv2;
+	u8 num_rec;
+
+	__be32 resv3;
+
+	__be32 resv4;
+
+	__be32 resv5;
+
+	struct reg_iedr_record record[64];
+};
+
 static struct emad_tlv_head emad_tlv_decode_header(__be16 type_len_be)
 {
 	u16 type_len = bpf_ntohs(type_len_be);
@@ -152,6 +186,13 @@ struct {
 	__type(key, struct ptce3_key);
 	__type(value, struct kvd_allocation);
 } ptce3 SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, 102400/*xxx*/);
+	__type(key, struct kvdl_key);
+	__type(value, struct kvd_allocation);
+} kvdl SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
@@ -333,6 +374,108 @@ static int handle_ptce3(const u8 *payload)
 		return handle_ptce3_free(&hkey);
 }
 
+static int handle_kvdl_alloc(struct kvdl_key *hkey, struct kvd_allocation *kvda)
+{
+	int rc = bpf_map_update_elem(&kvdl, hkey, kvda, BPF_NOEXIST);
+	if (!rc)
+		counter_inc(kvda);
+	return 0;
+}
+
+static void handle_kvdl_free_1(u32 index, enum resmon_counter counter)
+{
+	struct kvdl_key hkey = {
+		.index = index,
+	};
+	struct kvd_allocation *kvda = bpf_map_lookup_elem(&kvdl, &hkey);
+
+	/* Ignore mismatched deallocations. */
+	if (kvda && kvda->counter == counter) {
+		bpf_map_delete_elem(&kvdl, &hkey);
+		counter_dec(kvda);
+	}
+}
+
+static void handle_kvdl_free_1000(u32 index, enum resmon_counter counter)
+{
+	/* IEDR size is encoded in a 12-bit field, so the size is at
+	 * most 4095. */
+	for (u32 i = 0; i < 1000; i++)
+		handle_kvdl_free_1(index++, counter);
+}
+
+static void handle_kvdl_free(u32 index, enum resmon_counter counter, u32 size)
+{
+	/* The size could be any value 1..4095. However a loop like this:
+	 *
+	 *     for (u32 i = 0; i < 4095; i++) {
+	 *       if (i >= size) break;
+	 *       // more stuff
+	 *     }
+	 *
+	 * ... gets rejected by the BPF verifier. Now without the extra
+	 * (i >= size) condition it does pass. So we need to hard-code
+	 * sizes that mlxsw is known to use, so that we do not need to
+	 * actually guard the loop like this.
+	 */
+	if (size == 1)
+		handle_kvdl_free_1(index, counter);
+	else if (size == 1000)
+		handle_kvdl_free_1000(index, counter);
+}
+
+static int handle_pefa(const u8 *payload)
+{
+	struct reg_pefa reg;
+	bpf_core_read(&reg, sizeof reg, payload);
+
+	struct kvdl_key hkey = {
+		.index = reg_pefa_index(reg),
+	};
+	struct kvd_allocation kvda = {
+		.slots = 1,
+		.counter = RESMON_COUNTER_ACTSET,
+	};
+	return handle_kvdl_alloc(&hkey, &kvda);
+}
+
+static int handle_iedr_record(struct reg_iedr_record *rec)
+{
+	enum resmon_counter counter;
+
+	switch (rec->type) {
+	case 0x23:
+		counter = RESMON_COUNTER_ACTSET;
+		break;
+	default:
+		return 0;
+	}
+
+	u32 index = reg_iedr_record_index_start(*rec);
+	u32 size = reg_iedr_record_size(*rec);
+
+	handle_kvdl_free(index, counter, size);
+	return 0;
+}
+
+static unsigned char reg_iedr[sizeof(struct reg_iedr)] __attribute__((aligned(4)));
+static int handle_iedr(const u8 *payload)
+{
+	struct reg_iedr *reg = (struct reg_iedr *) reg_iedr;
+	bpf_core_read(reg, sizeof *reg, payload);
+
+	/* Nominally there are 64 records, but if we parse them all in a
+	 * loop, the validator will not be able to process the large-sized
+	 * ones, which involve more looping. In practice, mlxsw only ever
+	 * issues single-record IEDR, so just assume that's the case here. */
+	if (reg->num_rec != 1) {
+		// xxx warn
+		return 0;
+	}
+
+	return handle_iedr_record(&reg->record[0]);
+}
+
 inline bool is_mlxsw_spectrum(struct devlink *devlink)
 {
 	static const char mlxsw_spectrum[] = "mlxsw_spectrum";
@@ -403,6 +546,10 @@ int BPF_PROG(handle__devlink_hwmsg,
 		return handle_ptar(buf);
 	case 0x3027: /* MLXSW_REG_PTCE3_ID */
 		return handle_ptce3(buf);
+	case 0x300F: /* MLXSW_REG_PEFA_ID */
+		return handle_pefa(buf);
+	case 0x3804: /* MLXSW_REG_IEDR_ID */
+		return handle_iedr(buf);
 	}
 
 	return 0;

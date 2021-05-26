@@ -12,7 +12,8 @@
 #define RESMON_COUNTERS(X) \
 	X(LPM_IPV4, "IPv4 LPM") \
 	X(LPM_IPV6, "IPv6 LPM") \
-	X(ATCAM, "ATCAM")
+	X(ATCAM, "ATCAM") \
+	X(ACTSET, "ACL Action Set")
 
 enum resmon_counter {
 	RESMON_COUNTERS(RESMON_COUNTER_EXPAND_AS_ENUM)
@@ -42,6 +43,10 @@ struct ptce3_key {
 	__u8 delta_value;
 	__u16 delta_start;
 	__u8 erp_id;
+};
+
+struct kvdl_key {
+	__u32 index;
 };
 
 #endif /* RESMON_H */
