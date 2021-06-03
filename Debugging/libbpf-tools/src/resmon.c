@@ -1,19 +1,26 @@
 // SPDX-License-Identifier: (LGPL-2.1 OR BSD-2-Clause)
+#include <assert.h>
 #include <argp.h>
 #include <inttypes.h>
+#include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <time.h>
 #include <unistd.h>
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
 #include <sys/resource.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/un.h>
 #include <arpa/inet.h>
 
 #include "resmon.h"
 #include "resmon.skel.h"
 #include "trace_helpers.h"
+
+static bool should_quit = false;
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(*(x)))
 
@@ -143,6 +150,11 @@ static int resmon_bpf_start(struct resmon_bpf *obj)
 	}
 
 	return 0;
+}
+
+static void resmon_bpf_stop(struct resmon_bpf *obj)
+{
+	resmon_bpf__detach(obj);
 }
 
 static int resmon_bpf_pin_map(struct bpf_map *map,
@@ -280,6 +292,149 @@ static int resmon_start_main(int argc, char **argv)
 static int resmon_start(int argc, char **argv)
 {
 	return resmon_common_args(argc, argv, resmon_start_main);
+}
+
+static struct sockaddr_un resmon_ctl_sockaddr(void)
+{
+	return (struct sockaddr_un) {
+		.sun_family = AF_LOCAL,
+		.sun_path = "/run/resmon.ctl",
+	};
+}
+
+static int resmon_ctl_open(void)
+{
+	int fd = socket(AF_LOCAL, SOCK_DGRAM, 0);
+	if (fd < 0) {
+		fprintf(stderr, "Failed to create control socket: %m\n");
+		return -1;
+	}
+
+	struct sockaddr_un sa = resmon_ctl_sockaddr();
+	unlink(sa.sun_path);
+
+	int err = bind(fd, (struct sockaddr *) &sa, sizeof sa);
+	if (err < 0) {
+		fprintf(stderr, "Failed to bind control socket: %m\n");
+		goto close_out;
+	}
+
+	return fd;
+
+close_out:
+	close(fd);
+	return err;
+}
+
+static void resmon_ctl_close(int fd)
+{
+	close(fd);
+	unlink(resmon_ctl_sockaddr().sun_path);
+}
+
+static int resmon_ctl_activity(int fd)
+{
+	int err;
+	struct sockaddr_un sa = {};
+	socklen_t sasz = sizeof sa;
+	ssize_t msgsz = recvfrom(fd, NULL, 0, MSG_PEEK | MSG_TRUNC,
+				 (struct sockaddr *) &sa, &sasz);
+	if (msgsz < 0) {
+		fprintf(stderr, "Failed to receive data on control socket: %m\n");
+		return -1;
+	}
+
+	char *buf = malloc(msgsz + 1);
+	if (buf == NULL) {
+		fprintf(stderr, "Failed to allocate control message buffer: %m\n");
+		return -1;
+	}
+	buf[msgsz] = '\0';
+
+	ssize_t n = recv(fd, buf, msgsz, 0);
+	if (n < 0) {
+		fprintf(stderr, "Failed to receive data on control socket: %m\n");
+		err = -1;
+		goto out;
+	}
+
+	fprintf(stderr, "activity: '%s'\n", buf);
+	ssize_t sent = sendto(fd, "OK", sizeof "OK", 0,
+			      (struct sockaddr *) &sa, sasz);
+	if (sent < 0) {
+		fprintf(stderr, "Failed to respond on control socket: %m\n");
+		err = -1;
+		goto out;
+	}
+
+	err = 0;
+out:
+	free(buf);
+	return err;
+}
+
+static int resmon_run_main(int argc, char **argv)
+{
+	int err;
+
+	if (argc)
+		return unknown_argument(*argv);
+
+	struct resmon_bpf *obj = resmon_bpf__open();
+	if (!obj) {
+		fprintf(stderr, "Failed to open the resmon BPF object\n");
+		return -1;
+	}
+
+	err = resmon_bpf_start(obj);
+	if (err)
+		goto destroy_out;
+
+	int fd = resmon_ctl_open();
+	if (fd < 0) {
+		err = fd;
+		goto stop_out;
+	}
+
+	struct pollfd pollfd = {
+		.fd = fd,
+		.events = POLLIN,
+	};
+
+	while (!should_quit) {
+		int nfds = poll(&pollfd, 1, 100 /*ms*/);
+		if (nfds < 0) {
+			fprintf(stderr, "Failed to poll: %m\n");
+			err = nfds;
+			goto out;
+		}
+		if (nfds != 0) {
+			assert(nfds == 1);
+			if (pollfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+				fprintf(stderr, "Control socket error: %m\n");
+				err = -1;
+				goto out;
+			}
+			if (pollfd.revents & POLLIN) {
+				err = resmon_ctl_activity(pollfd.fd);
+				if (err)
+					goto out;
+			}
+		}
+	}
+
+out:
+	resmon_ctl_close(fd);
+stop_out:
+	resmon_bpf_stop(obj);
+destroy_out:
+	resmon_bpf__destroy(obj);
+	return err;
+}
+
+static int resmon_run(int argc, char **argv)
+{
+	return resmon_common_args(argc, argv, resmon_run_main);
 }
 
 enum resmon_unlink_status {
@@ -463,6 +618,8 @@ static int resmon_cmd(int argc, char **argv)
 {
 	if (!argc || matches(*argv, "help") == 0)
 		return resmon_help();
+	else if (matches(*argv, "run") == 0)
+		return resmon_run(argc - 1, argv + 1);
 	else if (matches(*argv, "start") == 0)
 		return resmon_start(argc - 1, argv + 1);
 	else if (matches(*argv, "stop") == 0)
@@ -494,8 +651,35 @@ enum {
 	resmon_opt_bpffs,
 };
 
+static void signal_handle_quit(int sig)
+{
+	should_quit = true;
+}
+
+static int signals_setup(void)
+{
+	if (signal(SIGINT, signal_handle_quit) == SIG_ERR) {
+		fprintf(stderr, "Failed to set up SIGINT handling: %m\n");
+		return -1;
+	}
+	if (signal(SIGQUIT, signal_handle_quit) == SIG_ERR) {
+		fprintf(stderr, "Failed to set up SIGQUIT handling: %m\n");
+		fprintf(stderr, "cannot handle SIGQUIT\n");
+		return -1;
+	}
+	if (signal(SIGTERM, signal_handle_quit) == SIG_ERR) {
+		fprintf(stderr, "Failed to set up SIGTERM handling: %m\n");
+		return -1;
+	}
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
+	int err = signals_setup();
+	if (err < 0)
+		return 1;
+
 	static const struct option long_options[] = {
 		{ "help",	no_argument,	   NULL, 'h' },
 		{ "quiet",	no_argument,	   NULL, 'q' },
