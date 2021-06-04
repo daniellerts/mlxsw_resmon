@@ -1,20 +1,24 @@
 // SPDX-License-Identifier: (LGPL-2.1 OR BSD-2-Clause)
-#include <assert.h>
+#define _GNU_SOURCE
 #include <argp.h>
+#include <assert.h>
 #include <inttypes.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <time.h>
 #include <unistd.h>
+#include <arpa/inet.h>
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
+#include <json-c/json_object.h>
+#include <json-c/json_object_iterator.h>
+#include <json-c/json_tokener.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/un.h>
-#include <arpa/inet.h>
 
 #include "resmon.h"
 #include "resmon.skel.h"
@@ -264,36 +268,6 @@ static int resmon_common_args(int argc, char **argv,
 	return and_then(argc, argv);
 }
 
-static int resmon_start_main(int argc, char **argv)
-{
-	int err;
-
-	if (argc)
-		return unknown_argument(*argv);
-
-	struct resmon_bpf *obj = resmon_bpf__open();
-	if (!obj) {
-		fprintf(stderr, "Failed to open the resmon BPF object\n");
-		return -1;
-	}
-
-	err = resmon_bpf_start(obj);
-	if (err)
-		return err;
-
-	err = resmon_bpf_pin(obj, env.bpffs);
-	if (err)
-		return err;
-
-	resmon_bpf__destroy(obj);
-	return err;
-}
-
-static int resmon_start(int argc, char **argv)
-{
-	return resmon_common_args(argc, argv, resmon_start_main);
-}
-
 static struct sockaddr_un resmon_ctl_sockaddr(void)
 {
 	return (struct sockaddr_un) {
@@ -332,6 +306,149 @@ static void resmon_ctl_close(int fd)
 	unlink(resmon_ctl_sockaddr().sun_path);
 }
 
+enum {
+	RESMON_ATTR_UNDEFINED,
+	RESMON_ATTR_RESPONSE,
+};
+
+static void resmon_ctl_respond(int fd, struct sockaddr *sa, size_t sasz,
+			       struct json_object *obj)
+{
+	const char *str = json_object_to_json_string(obj);
+	sendto(fd, str, strlen(str), 0, sa, sasz);
+}
+
+static int resmon_ctl_object_attach(struct json_object *obj,
+				    const char *key,
+				    struct json_object *val_obj)
+{
+	if (val_obj == NULL)
+		return -1;
+
+	int rc = json_object_object_add(obj, key, val_obj);
+	if (rc < 0) {
+		json_object_put(val_obj);
+		return -1;
+	}
+
+	return 0;
+}
+
+static struct json_object *resmon_ctl_jsonrpc_object(struct json_object *id)
+{
+	struct json_object *obj = json_object_new_object();
+	if (obj == NULL)
+		return NULL;
+
+	if (resmon_ctl_object_attach(obj, "jsonrpc",
+				     json_object_new_string("2.0")) ||
+	    /* Note: ID is allowed to be NULL. */
+	    json_object_object_add(obj, "id", id))
+		goto err_put_obj;
+
+	return obj;
+
+err_put_obj:
+	json_object_put(obj);
+	return NULL;
+}
+
+static int resmon_ctl_object_attach_error(struct json_object *obj,
+					  int code, const char *message)
+{
+	struct json_object *err_obj = json_object_new_object();
+	if (err_obj == NULL)
+		return -1;
+
+	if (resmon_ctl_object_attach(err_obj, "code",
+				     json_object_new_int(code)) ||
+	    resmon_ctl_object_attach(err_obj, "message",
+				     json_object_new_string(message)))
+		goto err_put_obj;
+
+	return resmon_ctl_object_attach(obj, "error", err_obj);
+
+err_put_obj:
+	json_object_put(obj);
+	return -1;
+}
+
+static int resmon_ctl_object_attach_result(struct json_object *obj,
+					   struct json_object *val_obj)
+{
+	int rc = json_object_object_add(obj, "result", val_obj);
+	if (rc)
+		json_object_put(val_obj);
+	return rc;
+}
+
+static void resmon_ctl_respond_invalid(int fd, struct sockaddr *sa, size_t sasz,
+				       struct json_object *id)
+{
+	struct json_object *obj = resmon_ctl_jsonrpc_object(id);
+	if (obj == NULL)
+		return;
+
+	if (resmon_ctl_object_attach_error(obj, -32600, "Invalid Request"))
+		goto err_put_obj;
+
+	resmon_ctl_respond(fd, sa, sasz, obj);
+
+err_put_obj:
+	json_object_put(obj);
+}
+
+static void resmon_ctl_respond_method_nf(int fd, struct sockaddr *sa, size_t sasz,
+					 struct json_object *id)
+{
+	struct json_object *obj = resmon_ctl_jsonrpc_object(id);
+	if (obj == NULL)
+		return;
+
+	if (resmon_ctl_object_attach_error(obj, -32601, "Method not found"))
+		goto err_put_obj;
+
+	resmon_ctl_respond(fd, sa, sasz, obj);
+
+err_put_obj:
+	json_object_put(obj);
+}
+
+static void resmon_ctl_handle_echo(int fd, struct sockaddr *sa, size_t sasz,
+				   struct json_object *params_obj,
+				   struct json_object *id)
+{
+	if (!id)
+		return;
+
+	struct json_object *obj = resmon_ctl_jsonrpc_object(id);
+	if (obj == NULL)
+		return;
+
+	if (resmon_ctl_object_attach_result(obj, json_object_get(params_obj)))
+		goto err_put_obj;
+
+	resmon_ctl_respond(fd, sa, sasz, obj);
+
+err_put_obj:
+	json_object_put(obj);
+}
+
+static void resmon_ctl_handle_method(int fd, struct sockaddr *sa, size_t sasz,
+				     struct json_object *method_obj,
+				     struct json_object *params_obj,
+				     struct json_object *id)
+{
+	if (json_object_get_type(method_obj) != json_type_string)
+		return resmon_ctl_respond_invalid(fd, sa, sasz, id);
+
+	const char *method = json_object_get_string(method_obj);
+	if (strcmp(method, "echo") == 0)
+		return resmon_ctl_handle_echo(fd, sa, sasz, params_obj, id);
+	else
+		return resmon_ctl_respond_method_nf(fd, sa, sasz, id);
+}
+
 static int resmon_ctl_activity(int fd)
 {
 	int err;
@@ -349,7 +466,6 @@ static int resmon_ctl_activity(int fd)
 		fprintf(stderr, "Failed to allocate control message buffer: %m\n");
 		return -1;
 	}
-	buf[msgsz] = '\0';
 
 	ssize_t n = recv(fd, buf, msgsz, 0);
 	if (n < 0) {
@@ -357,15 +473,49 @@ static int resmon_ctl_activity(int fd)
 		err = -1;
 		goto out;
 	}
+	buf[n] = '\0';
 
 	fprintf(stderr, "activity: '%s'\n", buf);
-	ssize_t sent = sendto(fd, "OK", sizeof "OK", 0,
-			      (struct sockaddr *) &sa, sasz);
-	if (sent < 0) {
-		fprintf(stderr, "Failed to respond on control socket: %m\n");
-		err = -1;
-		goto out;
+
+	struct json_object *method = NULL;
+	struct json_object *params = NULL;
+	struct json_object *id = NULL;
+	bool invalid = false;
+
+	struct json_object *j = json_tokener_parse(buf);
+	if (j == NULL)
+		invalid = true;
+	else {
+		for (struct json_object_iterator it = json_object_iter_begin(j),
+			     et = json_object_iter_end(j);
+		     !json_object_iter_equal(&it, &et);
+		     json_object_iter_next(&it)) {
+			const char *key = json_object_iter_peek_name(&it);
+			struct json_object *val = json_object_iter_peek_value(&it);
+			// xxx handle jsonrpc = "2.0"
+			if (strcmp(key, "method") == 0)
+				method = val;
+			else if (strcmp(key, "params") == 0)
+				params = val;
+			else if (strcmp(key, "id") == 0)
+				id = val;
+			else {
+				invalid = true;
+				break;
+			}
+		}
 	}
+
+	if (invalid)
+		resmon_ctl_respond_invalid(fd, (struct sockaddr *) &sa, sasz,
+					   id);
+	else if (method != NULL)
+		resmon_ctl_handle_method(fd, (struct sockaddr *) &sa, sasz,
+					 method, params, id);
+	else
+		/* No method => not a request. */
+		resmon_ctl_respond_invalid(fd, (struct sockaddr *) &sa, sasz,
+					   id);
 
 	err = 0;
 out:
@@ -373,12 +523,9 @@ out:
 	return err;
 }
 
-static int resmon_run_main(int argc, char **argv)
+static int resmon_loop(void)
 {
 	int err;
-
-	if (argc)
-		return unknown_argument(*argv);
 
 	struct resmon_bpf *obj = resmon_bpf__open();
 	if (!obj) {
@@ -432,159 +579,43 @@ destroy_out:
 	return err;
 }
 
-static int resmon_run(int argc, char **argv)
-{
-	return resmon_common_args(argc, argv, resmon_run_main);
-}
-
-enum resmon_unlink_status {
-	resmon_unlink_nil,
-	resmon_unlink_ok,
-	resmon_unlink_enoent,
-	resmon_unlink_fail,
-};
-
-static void resmon_check_status(enum resmon_unlink_status *status,
-				enum resmon_unlink_status proposed)
-{
-	/* The following forbids transitioning from OK to ENOENT. ENOENT
-	 * serves to distinguish the case where the tool has not been
-	 * running at all, and therefore should only be reported if all
-	 * items fail. */
-	if (*status == resmon_unlink_nil)
-		*status = proposed;
-	else if (proposed != resmon_unlink_ok &&
-		 proposed != *status)
-		*status = resmon_unlink_fail;
-}
-
-static void resmon_check_rc(int (*cb)(const char *),
-			    const char *path,
-			    enum resmon_unlink_status *status,
-			    int *errno_p, const char **path_p)
-{
-	if (cb(path) == 0)
-		resmon_check_status(status, resmon_unlink_ok);
-	else if (errno == ENOENT)
-		resmon_check_status(status, resmon_unlink_enoent);
-	else
-		resmon_check_status(status, resmon_unlink_fail);
-
-	if (*status == resmon_unlink_fail && *errno_p == 0) {
-		*errno_p = errno;
-		*path_p = path;
-	}
-}
-
-static int resmon_stop_main(int argc, char **argv)
-{
-	if (argc)
-		return unknown_argument(*argv);
-
-	enum resmon_unlink_status status = resmon_unlink_nil;
-	int fail_errno = 0;
-	const char *fail_path;
-
-	resmon_check_rc(unlink, resmon_pin_path(env.bpffs, "link"), &status,
-			&fail_errno, &fail_path);
-	resmon_check_rc(unlink, resmon_pin_path(env.bpffs, "counters"), &status,
-			&fail_errno, &fail_path);
-	resmon_check_rc(unlink, resmon_pin_path(env.bpffs, "ralue"), &status,
-			&fail_errno, &fail_path);
-	resmon_check_rc(unlink, resmon_pin_path(env.bpffs, "ptce3"), &status,
-			&fail_errno, &fail_path);
-	resmon_check_rc(unlink, resmon_pin_path(env.bpffs, "ptar"), &status,
-			&fail_errno, &fail_path);
-	resmon_check_rc(unlink, resmon_pin_path(env.bpffs, "kvdl"), &status,
-			&fail_errno, &fail_path);
-	resmon_check_rc(rmdir, resmon_pin_path(env.bpffs, ""), &status,
-			&fail_errno, &fail_path);
-
-	switch (status) {
-	case resmon_unlink_fail:
-		fprintf(stderr, "Couldn't remove `%s': %s\n",
-			fail_path, strerror(fail_errno));
-		return -1;
-	case resmon_unlink_enoent:
-		fprintf(stderr, "Resmon is not running.\n");
-		return -1;
-	default:
-		return 0;
-	}
-}
-
-static int resmon_stop(int argc, char **argv)
-{
-	return resmon_common_args(argc, argv, resmon_stop_main);
-}
-
-static int resmon_stat(const char *path)
-{
-	struct stat buf;
-	return stat(path, &buf);
-}
-
-static int resmon_is_running_main(int argc, char **argv)
-{
-	if (argc)
-		return unknown_argument(*argv);
-
-	enum resmon_unlink_status status = resmon_unlink_nil;
-	int fail_errno = 0;
-	const char *fail_path;
-
-	resmon_check_rc(resmon_stat, resmon_pin_path(env.bpffs, "link"),
-			&status, &fail_errno, &fail_path);
-	resmon_check_rc(resmon_stat, resmon_pin_path(env.bpffs, "counters"),
-			&status, &fail_errno, &fail_path);
-	resmon_check_rc(resmon_stat, resmon_pin_path(env.bpffs, "ralue"),
-			&status, &fail_errno, &fail_path);
-	resmon_check_rc(resmon_stat, resmon_pin_path(env.bpffs, ""),
-			&status, &fail_errno, &fail_path);
-
-	switch (status) {
-	case resmon_unlink_fail:
-		fprintf(stderr, "Inconsistent state at `%s': %s\n",
-			fail_path, strerror(fail_errno));
-		return -1;
-	case resmon_unlink_enoent:
-		if (env.verbosity >= LIBBPF_INFO)
-			fprintf(stderr, "Resmon is not running.\n");
-		return 1;
-	default:
-		if (env.verbosity >= LIBBPF_INFO)
-			fprintf(stderr, "Resmon is running.\n");
-		return 0;
-	}
-}
-
-static int resmon_is_running(int argc, char **argv)
-{
-	return resmon_common_args(argc, argv, resmon_is_running_main);
-}
-
-static int resmon_restart_main(int argc, char **argv)
+static int resmon_start_main(int argc, char **argv)
 {
 	int err;
 
 	if (argc)
 		return unknown_argument(*argv);
 
-	err = resmon_stop_main(0, NULL);
+	struct resmon_bpf *obj = resmon_bpf__open();
+	if (!obj) {
+		fprintf(stderr, "Failed to open the resmon BPF object\n");
+		return -1;
+	}
+
+	err = resmon_bpf_start(obj);
 	if (err)
 		return err;
 
-	err = resmon_start_main(0, NULL);
+	err = resmon_loop();
 	if (err)
-		fprintf(stderr, "Couldn't restart resmon after already stopping it: %s.\n",
-			strerror(errno));
+		return err;
 
+	err = resmon_bpf_pin(obj, env.bpffs);
+	if (err)
+		return err;
+
+	resmon_bpf__destroy(obj);
 	return err;
 }
 
-static int resmon_restart(int argc, char **argv)
+static int resmon_start(int argc, char **argv)
 {
-	return resmon_common_args(argc, argv, resmon_restart_main);
+	return resmon_common_args(argc, argv, resmon_start_main);
+}
+
+static int resmon_stop(int argc, char **argv)
+{
+	return -EOPNOTSUPP; // xxx
 }
 
 static int resmon_stats_main(int argc, char **argv)
@@ -614,22 +645,23 @@ static int resmon_stats(int argc, char **argv)
 	return resmon_common_args(argc, argv, resmon_stats_main);
 }
 
+static int resmon_ping(int argc, char **argv)
+{
+	return -EOPNOTSUPP; // xxx
+}
+
 static int resmon_cmd(int argc, char **argv)
 {
 	if (!argc || matches(*argv, "help") == 0)
 		return resmon_help();
-	else if (matches(*argv, "run") == 0)
-		return resmon_run(argc - 1, argv + 1);
-	else if (matches(*argv, "start") == 0)
+	else if (matches(*argv, "__start__") == 0)
 		return resmon_start(argc - 1, argv + 1);
-	else if (matches(*argv, "stop") == 0)
+	else if (matches(*argv, "__stop__") == 0)
 		return resmon_stop(argc - 1, argv + 1);
-	else if (matches(*argv, "restart") == 0)
-		return resmon_restart(argc - 1, argv + 1);
-	else if (matches(*argv, "is-running") == 0)
-		return resmon_is_running(argc - 1, argv + 1);
 	else if (matches(*argv, "stats") == 0)
 		return resmon_stats(argc - 1, argv + 1);
+	else if (matches(*argv, "ping") == 0)
+		return resmon_ping(argc - 1, argv + 1);
 
 	fprintf(stderr, "Unknown command \"%s\"\n", *argv);
 	return -EINVAL;

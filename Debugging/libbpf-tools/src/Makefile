@@ -84,9 +84,15 @@ $(OUTPUT)/resmon.o: resmon.h
 $(OUTPUT)/resmon.bpf.o: resmon.h
 
 # Build application binary
-emadlatency trapagg resmon: %: $(OUTPUT)/%.o $(LIBBPF_OBJ) $(COMMON_OBJ) | $(OUTPUT) $(OUTPUT)/%.bpf.o
+emadlatency trapagg: %: $(OUTPUT)/%.o $(LIBBPF_OBJ) $(COMMON_OBJ) | $(OUTPUT) $(OUTPUT)/%.bpf.o
 	$(call msg,BINARY,$@)
 	$(Q)$(CC) $(CFLAGS) $^ -lelf -lz -o $@
+
+$(OUTPUT)/resmon.o: INCLUDES += $(shell pkgconf --cflags libnl-3.0 libnl-genl-3.0)
+resmon: CFLAGS += $(shell pkgconf --libs libelf json-c)
+resmon: %: $(OUTPUT)/%.o $(LIBBPF_OBJ) $(COMMON_OBJ) | $(OUTPUT) $(OUTPUT)/%.bpf.o
+	$(call msg,BINARY,$@)
+	$(Q)$(CC) $(CFLAGS) -lz $^ -o $@
 
 emadump: %: $(OUTPUT)/%.o $(LIBBPF_OBJ) $(COMMON_OBJ) | $(OUTPUT)
 	$(call msg,BINARY,$@)
