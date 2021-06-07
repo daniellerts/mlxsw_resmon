@@ -161,65 +161,6 @@ static void resmon_bpf_stop(struct resmon_bpf *obj)
 	resmon_bpf__detach(obj);
 }
 
-static int resmon_bpf_pin_map(struct bpf_map *map,
-			      const char *bpffs, const char *name)
-{
-	int err;
-
-	err = bpf_map__pin(map, resmon_pin_path(bpffs, name));
-	if (err)
-		fprintf(stderr, "Failed to pin %s map: %s\n", name, strerror(-err));
-
-	return err;
-}
-
-static int resmon_bpf_pin(struct resmon_bpf *obj, const char *bpffs)
-{
-	int err;
-
-	err = bpf_link__pin(obj->links.handle__devlink_hwmsg,
-			    resmon_pin_path(bpffs, "link"));
-	if (err) {
-		fprintf(stderr, "Failed to pin BPF link: %s\n", strerror(-err));
-		return err;
-	}
-
-	err = resmon_bpf_pin_map(obj->maps.counters, bpffs, "counters");
-	if (err)
-		goto unpin_link;
-
-	err = resmon_bpf_pin_map(obj->maps.ralue, bpffs, "ralue");
-	if (err)
-		goto unpin_counters;
-
-	err = resmon_bpf_pin_map(obj->maps.ptar, bpffs, "ptar");
-	if (err)
-		goto unpin_ralue;
-
-	err = resmon_bpf_pin_map(obj->maps.ptce3, bpffs, "ptce3");
-	if (err)
-		goto unpin_ptar;
-
-	err = resmon_bpf_pin_map(obj->maps.kvdl, bpffs, "kvdl");
-	if (err)
-		goto unpin_ptce3;
-
-	return 0;
-
-unpin_ptce3:
-	bpf_map__unpin(obj->maps.ptce3, NULL);
-unpin_ptar:
-	bpf_map__unpin(obj->maps.ptar, NULL);
-unpin_ralue:
-	bpf_map__unpin(obj->maps.ralue, NULL);
-unpin_counters:
-	bpf_map__unpin(obj->maps.counters, NULL);
-unpin_link:
-	bpf_link__unpin(obj->links.handle__devlink_hwmsg);
-	rmdir(resmon_pin_path(bpffs, ""));
-	return err;
-}
-
 static int resmon_bpf_restore_map(struct bpf_map *map, const char *path)
 {
 	int fd;
@@ -272,11 +213,22 @@ static struct sockaddr_un resmon_ctl_sockaddr(void)
 {
 	return (struct sockaddr_un) {
 		.sun_family = AF_LOCAL,
-		.sun_path = "/run/resmon.ctl",
+		.sun_path = "/var/run/resmon.ctl",
 	};
 }
 
-static int resmon_ctl_open(void)
+static struct sockaddr_un resmon_cli_sockaddr(void)
+{
+	static struct sockaddr_un sa = {};
+	if (sa.sun_family == AF_UNSPEC) {
+		snprintf(sa.sun_path, sizeof sa.sun_path,
+			 "/var/run/resmon.cli.%d", getpid());
+		sa.sun_family = AF_LOCAL;
+	}
+	return sa;
+}
+
+static int resmon_socket_open(struct sockaddr_un sa)
 {
 	int fd = socket(AF_LOCAL, SOCK_DGRAM, 0);
 	if (fd < 0) {
@@ -284,38 +236,44 @@ static int resmon_ctl_open(void)
 		return -1;
 	}
 
-	struct sockaddr_un sa = resmon_ctl_sockaddr();
 	unlink(sa.sun_path);
 
 	int err = bind(fd, (struct sockaddr *) &sa, sizeof sa);
 	if (err < 0) {
 		fprintf(stderr, "Failed to bind control socket: %m\n");
-		goto close_out;
+		goto close_fd;
 	}
 
 	return fd;
 
-close_out:
+close_fd:
 	close(fd);
 	return err;
 }
 
-static void resmon_ctl_close(int fd)
+static void resmon_socket_close(struct sockaddr_un sa, int fd)
 {
 	close(fd);
-	unlink(resmon_ctl_sockaddr().sun_path);
+	unlink(sa.sun_path);
 }
 
-enum {
-	RESMON_ATTR_UNDEFINED,
-	RESMON_ATTR_RESPONSE,
-};
+static int resmon_ctl_open(void)
+{
+	return resmon_socket_open(resmon_ctl_sockaddr());
+}
 
-static void resmon_ctl_respond(int fd, struct sockaddr *sa, size_t sasz,
-			       struct json_object *obj)
+static void resmon_ctl_close(int fd)
+{
+	return resmon_socket_close(resmon_ctl_sockaddr(), fd);
+}
+
+static int resmon_ctl_send(int fd, struct sockaddr *sa, size_t sasz,
+			   struct json_object *obj)
 {
 	const char *str = json_object_to_json_string(obj);
-	sendto(fd, str, strlen(str), 0, sa, sasz);
+	size_t len = strlen(str);
+	int rc = sendto(fd, str, len, 0, sa, sasz);
+	return rc == len ? 0 : -1;
 }
 
 static int resmon_ctl_object_attach(struct json_object *obj,
@@ -342,7 +300,7 @@ static struct json_object *resmon_ctl_jsonrpc_object(struct json_object *id)
 
 	if (resmon_ctl_object_attach(obj, "jsonrpc",
 				     json_object_new_string("2.0")) ||
-	    /* Note: ID is allowed to be NULL. */
+	    /* Note: ID is allowed to be NULL, so use json_object_object_add. */
 	    json_object_object_add(obj, "id", id))
 		goto err_put_obj;
 
@@ -392,7 +350,7 @@ static void resmon_ctl_respond_invalid(int fd, struct sockaddr *sa, size_t sasz,
 	if (resmon_ctl_object_attach_error(obj, -32600, "Invalid Request"))
 		goto err_put_obj;
 
-	resmon_ctl_respond(fd, sa, sasz, obj);
+	resmon_ctl_send(fd, sa, sasz, obj);
 
 err_put_obj:
 	json_object_put(obj);
@@ -408,7 +366,7 @@ static void resmon_ctl_respond_method_nf(int fd, struct sockaddr *sa, size_t sas
 	if (resmon_ctl_object_attach_error(obj, -32601, "Method not found"))
 		goto err_put_obj;
 
-	resmon_ctl_respond(fd, sa, sasz, obj);
+	resmon_ctl_send(fd, sa, sasz, obj);
 
 err_put_obj:
 	json_object_put(obj);
@@ -418,9 +376,6 @@ static void resmon_ctl_handle_echo(int fd, struct sockaddr *sa, size_t sasz,
 				   struct json_object *params_obj,
 				   struct json_object *id)
 {
-	if (!id)
-		return;
-
 	struct json_object *obj = resmon_ctl_jsonrpc_object(id);
 	if (obj == NULL)
 		return;
@@ -428,7 +383,25 @@ static void resmon_ctl_handle_echo(int fd, struct sockaddr *sa, size_t sasz,
 	if (resmon_ctl_object_attach_result(obj, json_object_get(params_obj)))
 		goto err_put_obj;
 
-	resmon_ctl_respond(fd, sa, sasz, obj);
+	resmon_ctl_send(fd, sa, sasz, obj);
+
+err_put_obj:
+	json_object_put(obj);
+}
+
+static void resmon_ctl_handle_quit(int fd, struct sockaddr *sa, size_t sasz,
+				   struct json_object *params_obj,
+				   struct json_object *id)
+{
+	struct json_object *obj = resmon_ctl_jsonrpc_object(id);
+	if (obj == NULL)
+		return;
+
+	if (resmon_ctl_object_attach_result(obj, json_object_new_boolean(true)))
+		goto err_put_obj;
+
+	resmon_ctl_send(fd, sa, sasz, obj);
+	should_quit = true;
 
 err_put_obj:
 	json_object_put(obj);
@@ -443,25 +416,37 @@ static void resmon_ctl_handle_method(int fd, struct sockaddr *sa, size_t sasz,
 		return resmon_ctl_respond_invalid(fd, sa, sasz, id);
 
 	const char *method = json_object_get_string(method_obj);
-	if (strcmp(method, "echo") == 0)
+	if (id != NULL &&
+	    strcmp(method, "echo") == 0)
 		return resmon_ctl_handle_echo(fd, sa, sasz, params_obj, id);
+	else if (id != NULL &&
+		 strcmp(method, "quit") == 0)
+		return resmon_ctl_handle_quit(fd, sa, sasz, params_obj, id);
 	else
 		return resmon_ctl_respond_method_nf(fd, sa, sasz, id);
 }
 
-static int resmon_ctl_activity(int fd)
+static bool resmon_ctl_validate_jsonrpc(struct json_object *ver_obj)
+{
+	if (json_object_get_type(ver_obj) != json_type_string)
+		return false;
+
+	const char *ver = json_object_get_string(ver_obj);
+	return strcmp(ver, "2.0") == 0;
+}
+
+static int resmon_ctl_recv(int fd, struct sockaddr *sa, socklen_t *sasz,
+			   char **bufp)
 {
 	int err;
-	struct sockaddr_un sa = {};
-	socklen_t sasz = sizeof sa;
 	ssize_t msgsz = recvfrom(fd, NULL, 0, MSG_PEEK | MSG_TRUNC,
-				 (struct sockaddr *) &sa, &sasz);
+				 sa, sasz);
 	if (msgsz < 0) {
 		fprintf(stderr, "Failed to receive data on control socket: %m\n");
 		return -1;
 	}
 
-	char *buf = malloc(msgsz + 1);
+	char *buf = calloc(1, msgsz + 1);
 	if (buf == NULL) {
 		fprintf(stderr, "Failed to allocate control message buffer: %m\n");
 		return -1;
@@ -474,6 +459,25 @@ static int resmon_ctl_activity(int fd)
 		goto out;
 	}
 	buf[n] = '\0';
+
+	*bufp = buf;
+	buf = NULL;
+	err = 0;
+
+out:
+	free(buf);
+	return err;
+}
+
+static int resmon_ctl_activity(int fd)
+{
+	struct sockaddr_un sa = {};
+	socklen_t sasz = sizeof sa;
+	char *buf = NULL;
+	int err = resmon_ctl_recv(fd, (struct sockaddr *) &sa, &sasz, &buf);
+	if (err < 0)
+		return err;
+
 
 	fprintf(stderr, "activity: '%s'\n", buf);
 
@@ -492,14 +496,16 @@ static int resmon_ctl_activity(int fd)
 		     json_object_iter_next(&it)) {
 			const char *key = json_object_iter_peek_name(&it);
 			struct json_object *val = json_object_iter_peek_value(&it);
-			// xxx handle jsonrpc = "2.0"
 			if (strcmp(key, "method") == 0)
 				method = val;
 			else if (strcmp(key, "params") == 0)
 				params = val;
 			else if (strcmp(key, "id") == 0)
 				id = val;
-			else {
+			else if (strcmp(key, "jsonrpc") == 0) {
+				if (!resmon_ctl_validate_jsonrpc(val))
+					invalid = true;
+			} else {
 				invalid = true;
 				break;
 			}
@@ -517,10 +523,8 @@ static int resmon_ctl_activity(int fd)
 		resmon_ctl_respond_invalid(fd, (struct sockaddr *) &sa, sasz,
 					   id);
 
-	err = 0;
-out:
 	free(buf);
-	return err;
+	return 0;
 }
 
 static int resmon_loop(void)
@@ -579,12 +583,38 @@ destroy_out:
 	return err;
 }
 
+static void signal_handle_quit(int sig)
+{
+	should_quit = true;
+}
+
+static int signals_setup(void)
+{
+	if (signal(SIGINT, signal_handle_quit) == SIG_ERR) {
+		fprintf(stderr, "Failed to set up SIGINT handling: %m\n");
+		return -1;
+	}
+	if (signal(SIGQUIT, signal_handle_quit) == SIG_ERR) {
+		fprintf(stderr, "Failed to set up SIGQUIT handling: %m\n");
+		return -1;
+	}
+	if (signal(SIGTERM, signal_handle_quit) == SIG_ERR) {
+		fprintf(stderr, "Failed to set up SIGTERM handling: %m\n");
+		return -1;
+	}
+	return 0;
+}
+
 static int resmon_start_main(int argc, char **argv)
 {
 	int err;
 
 	if (argc)
 		return unknown_argument(*argv);
+
+	err = signals_setup();
+	if (err < 0)
+		return -1;
 
 	struct resmon_bpf *obj = resmon_bpf__open();
 	if (!obj) {
@@ -600,10 +630,6 @@ static int resmon_start_main(int argc, char **argv)
 	if (err)
 		return err;
 
-	err = resmon_bpf_pin(obj, env.bpffs);
-	if (err)
-		return err;
-
 	resmon_bpf__destroy(obj);
 	return err;
 }
@@ -615,7 +641,65 @@ static int resmon_start(int argc, char **argv)
 
 static int resmon_stop(int argc, char **argv)
 {
-	return -EOPNOTSUPP; // xxx
+	int err = -1;
+	int fd = resmon_socket_open(resmon_cli_sockaddr());
+	if (fd < 0) {
+		fprintf(stderr, "Failed to open a socket: %m\n");
+		return -1;
+	}
+
+	struct sockaddr_un sa = resmon_ctl_sockaddr();
+	err = connect(fd, &sa, sizeof sa);
+	if (err) {
+		fprintf(stderr, "Failed to connect to %s: %m\n",
+			sa.sun_path);
+		goto close_fd;
+	}
+
+	struct json_object *id = json_object_new_int(1);
+	if (id == NULL) {
+		fprintf(stderr, "Failed to allocate an ID object.\n");
+		goto close_fd;
+	}
+
+	struct json_object *query = resmon_ctl_jsonrpc_object(id);
+	if (query == NULL) {
+		fprintf(stderr, "Failed to allocate a request object.\n");
+		goto free_id;
+	}
+	id = NULL;
+
+	if (resmon_ctl_object_attach(query, "method",
+				     json_object_new_string("quit"))) {
+		fprintf(stderr, "Failed to form a request object.\n");
+		goto put_query;
+	}
+
+	err = resmon_ctl_send(fd, (struct sockaddr *) &sa, sizeof sa, query);
+	if (err < 0) {
+		fprintf(stderr, "Failed to send the RPC message: %m\n");
+		goto put_query;
+	}
+
+	char *buf = NULL;
+	err = resmon_ctl_recv(fd, NULL, NULL, &buf);
+	if (err < 0) {
+		fprintf(stderr, "Failed to receive an RPC response\n");
+		goto put_query;
+	}
+
+	fprintf(stderr, "response: '%s'\n", buf);
+	err = 0;
+
+	free(buf);
+put_query:
+	json_object_put(query);
+free_id:
+	if (id != NULL)
+		json_object_put(id);
+close_fd:
+	resmon_socket_close(resmon_cli_sockaddr(), fd);
+	return err;
 }
 
 static int resmon_stats_main(int argc, char **argv)
@@ -645,11 +729,6 @@ static int resmon_stats(int argc, char **argv)
 	return resmon_common_args(argc, argv, resmon_stats_main);
 }
 
-static int resmon_ping(int argc, char **argv)
-{
-	return -EOPNOTSUPP; // xxx
-}
-
 static int resmon_cmd(int argc, char **argv)
 {
 	if (!argc || matches(*argv, "help") == 0)
@@ -660,8 +739,6 @@ static int resmon_cmd(int argc, char **argv)
 		return resmon_stop(argc - 1, argv + 1);
 	else if (matches(*argv, "stats") == 0)
 		return resmon_stats(argc - 1, argv + 1);
-	else if (matches(*argv, "ping") == 0)
-		return resmon_ping(argc - 1, argv + 1);
 
 	fprintf(stderr, "Unknown command \"%s\"\n", *argv);
 	return -EINVAL;
@@ -683,35 +760,8 @@ enum {
 	resmon_opt_bpffs,
 };
 
-static void signal_handle_quit(int sig)
-{
-	should_quit = true;
-}
-
-static int signals_setup(void)
-{
-	if (signal(SIGINT, signal_handle_quit) == SIG_ERR) {
-		fprintf(stderr, "Failed to set up SIGINT handling: %m\n");
-		return -1;
-	}
-	if (signal(SIGQUIT, signal_handle_quit) == SIG_ERR) {
-		fprintf(stderr, "Failed to set up SIGQUIT handling: %m\n");
-		fprintf(stderr, "cannot handle SIGQUIT\n");
-		return -1;
-	}
-	if (signal(SIGTERM, signal_handle_quit) == SIG_ERR) {
-		fprintf(stderr, "Failed to set up SIGTERM handling: %m\n");
-		return -1;
-	}
-	return 0;
-}
-
 int main(int argc, char **argv)
 {
-	int err = signals_setup();
-	if (err < 0)
-		return 1;
-
 	static const struct option long_options[] = {
 		{ "help",	no_argument,	   NULL, 'h' },
 		{ "quiet",	no_argument,	   NULL, 'q' },
