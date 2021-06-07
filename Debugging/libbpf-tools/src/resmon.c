@@ -14,6 +14,7 @@
 #include <json-c/json_object.h>
 #include <json-c/json_object_iterator.h>
 #include <json-c/json_tokener.h>
+#include <json-c/json_util.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -311,8 +312,39 @@ err_put_obj:
 	return NULL;
 }
 
+static struct json_object *resmon_ctl_request_object(int id, const char *method)
+{
+	struct json_object *id_obj = json_object_new_int(id);
+	if (id_obj == NULL) {
+		fprintf(stderr, "Failed to allocate an ID object.\n");
+		return NULL;
+	}
+
+	struct json_object *request = resmon_ctl_jsonrpc_object(id_obj);
+	if (request == NULL) {
+		fprintf(stderr, "Failed to allocate a request object.\n");
+		goto put_id;
+	}
+	id_obj = NULL;
+
+	if (resmon_ctl_object_attach(request, "method",
+				     json_object_new_string(method))) {
+		fprintf(stderr, "Failed to form a request object.\n");
+		goto put_request;
+	}
+
+	return request;
+
+put_request:
+	json_object_put(request);
+put_id:
+	json_object_put(id_obj);
+	return NULL;
+}
+
 static int resmon_ctl_object_attach_error(struct json_object *obj,
-					  int code, const char *message)
+					  int code, const char *message,
+					  const char *data)
 {
 	struct json_object *err_obj = json_object_new_object();
 	if (err_obj == NULL)
@@ -323,6 +355,11 @@ static int resmon_ctl_object_attach_error(struct json_object *obj,
 	    resmon_ctl_object_attach(err_obj, "message",
 				     json_object_new_string(message)))
 		goto err_put_obj;
+
+	if (data)
+		/* Allow this to fail, the error object is valid without it. */
+		resmon_ctl_object_attach(err_obj, "data",
+					 json_object_new_string(data));
 
 	return resmon_ctl_object_attach(obj, "error", err_obj);
 
@@ -341,13 +378,14 @@ static int resmon_ctl_object_attach_result(struct json_object *obj,
 }
 
 static void resmon_ctl_respond_invalid(int fd, struct sockaddr *sa, size_t sasz,
-				       struct json_object *id)
+				       struct json_object *id, const char *data)
 {
 	struct json_object *obj = resmon_ctl_jsonrpc_object(id);
 	if (obj == NULL)
 		return;
 
-	if (resmon_ctl_object_attach_error(obj, -32600, "Invalid Request"))
+	if (resmon_ctl_object_attach_error(obj, -32600, "Invalid Request",
+					   data))
 		goto err_put_obj;
 
 	resmon_ctl_send(fd, sa, sasz, obj);
@@ -356,14 +394,16 @@ err_put_obj:
 	json_object_put(obj);
 }
 
-static void resmon_ctl_respond_method_nf(int fd, struct sockaddr *sa, size_t sasz,
-					 struct json_object *id)
+static void resmon_ctl_respond_method_nf(int fd, struct sockaddr *sa,
+					 size_t sasz, struct json_object *id,
+					 const char *method)
 {
 	struct json_object *obj = resmon_ctl_jsonrpc_object(id);
 	if (obj == NULL)
 		return;
 
-	if (resmon_ctl_object_attach_error(obj, -32601, "Method not found"))
+	if (resmon_ctl_object_attach_error(obj, -32601, "Method not found",
+					   method))
 		goto err_put_obj;
 
 	resmon_ctl_send(fd, sa, sasz, obj);
@@ -408,22 +448,16 @@ err_put_obj:
 }
 
 static void resmon_ctl_handle_method(int fd, struct sockaddr *sa, size_t sasz,
-				     struct json_object *method_obj,
+				     const char *method,
 				     struct json_object *params_obj,
 				     struct json_object *id)
 {
-	if (json_object_get_type(method_obj) != json_type_string)
-		return resmon_ctl_respond_invalid(fd, sa, sasz, id);
-
-	const char *method = json_object_get_string(method_obj);
-	if (id != NULL &&
-	    strcmp(method, "echo") == 0)
+	if (strcmp(method, "echo") == 0)
 		return resmon_ctl_handle_echo(fd, sa, sasz, params_obj, id);
-	else if (id != NULL &&
-		 strcmp(method, "quit") == 0)
+	else if (strcmp(method, "quit") == 0)
 		return resmon_ctl_handle_quit(fd, sa, sasz, params_obj, id);
 	else
-		return resmon_ctl_respond_method_nf(fd, sa, sasz, id);
+		return resmon_ctl_respond_method_nf(fd, sa, sasz, id, method);
 }
 
 static bool resmon_ctl_validate_jsonrpc(struct json_object *ver_obj)
@@ -433,6 +467,190 @@ static bool resmon_ctl_validate_jsonrpc(struct json_object *ver_obj)
 
 	const char *ver = json_object_get_string(ver_obj);
 	return strcmp(ver, "2.0") == 0;
+}
+
+static bool resmon_ctl_validate_id(struct json_object *id_obj, int expect_id)
+{
+	int64_t id = json_object_get_int64(id_obj);
+	return id == expect_id;
+}
+
+struct resmon_ctl_policy {
+	const char *key;
+	enum json_type type;
+	bool any_type;
+	bool required;
+};
+
+static int resmon_ctl_parse_jsonrpc_object(const char *what,
+					   struct json_object *obj,
+					   struct resmon_ctl_policy policy[],
+					   struct json_object *values[],
+					   size_t policy_size,
+					   char **error)
+{
+	for (size_t i = 0; i < policy_size; i++)
+		values[i] = NULL;
+
+	for (struct json_object_iterator it = json_object_iter_begin(obj),
+					 et = json_object_iter_end(obj);
+	     !json_object_iter_equal(&it, &et);
+	     json_object_iter_next(&it)) {
+		const char *key = json_object_iter_peek_name(&it);
+		struct json_object *val = json_object_iter_peek_value(&it);
+
+		bool found = false;
+		for (size_t i = 0; i < policy_size; i++) {
+			struct resmon_ctl_policy *pol = &policy[i];
+			if (strcmp(key, pol->key) == 0) {
+				enum json_type type = json_object_get_type(val);
+				if (!pol->any_type && pol->type != type) {
+					asprintf(error, "Invalid %s object: the member %s is expected to be a %s, but is %s.",
+						 what, key,
+						 json_type_to_name(pol->type),
+						 json_type_to_name(type));
+					return -1;
+				}
+
+				if (values[i] != NULL) {
+					asprintf(error, "Invalid %s object: duplicate member %s.",
+						 what, key);
+					return -1;
+				}
+
+				values[i] = val;
+				found = true;
+				break;
+			}
+		}
+
+		if (!found) {
+			asprintf(error, "Invalid %s object: the member %s is not expected.",
+				 what, key);
+			return -1;
+		}
+	}
+
+	for (size_t i = 0; i < policy_size; i++) {
+		struct resmon_ctl_policy *pol = &policy[i];
+		if (values[i] == NULL && pol->required) {
+			asprintf(error, "Invalid %s object: required member %s not present.",
+				 what, pol->key);
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+static void resmon_ctl_handle_response_error(struct json_object *error_obj)
+{
+	enum policy {
+		pol_code,
+		pol_message,
+		pol_data,
+	};
+	struct resmon_ctl_policy policy[] = {
+		[pol_code] =    { .key = "code", .type = json_type_int,
+				  .required = true },
+		[pol_message] = { .key = "message", .type = json_type_string,
+				  .required = true },
+		[pol_data] =    { .key = "data", .any_type = true },
+	};
+	struct json_object *values[ARRAY_SIZE(policy)];
+	{
+		char *error = NULL;
+		int err = resmon_ctl_parse_jsonrpc_object("error", error_obj,
+							  policy, values,
+							  ARRAY_SIZE(policy),
+							  &error);
+		if (err) {
+			fprintf(stderr, "%s\n", error);
+			free(error);
+			return;
+		}
+	}
+
+	if (values[pol_data])
+		fprintf(stderr, "Error %" PRId64 ": %s (%s)\n",
+			json_object_get_int64(values[pol_code]),
+			json_object_get_string(values[pol_message]),
+			json_object_to_json_string(values[pol_data]));
+	else
+		fprintf(stderr, "Error %" PRId64 ": %s\n",
+			json_object_get_int64(values[pol_code]),
+			json_object_get_string(values[pol_message]));
+}
+
+static int resmon_ctl_handle_response(const char *str, int expect_id)
+{
+	int err = -1;
+
+	struct json_object *j = json_tokener_parse(str);
+	if (j == NULL) {
+		fprintf(stderr, "Failed to parse RPC response as JSON.\n");
+		return -1;
+	}
+
+	enum policy {
+		pol_jsonrpc,
+		pol_id,
+		pol_result,
+		pol_error,
+	};
+	struct resmon_ctl_policy policy[] = {
+		[pol_jsonrpc] = { .key = "jsonrpc", .type = json_type_string },
+		[pol_id] =      { .key = "id", .any_type = true,
+				  .required = true },
+		[pol_error] =   { .key = "error", .type = json_type_object },
+		[pol_result] =  { .key = "result", .type = json_type_boolean },
+	};
+	struct json_object *values[ARRAY_SIZE(policy)];
+	{
+		char *error = NULL;
+		err = resmon_ctl_parse_jsonrpc_object("response", j,
+						      policy, values,
+						      ARRAY_SIZE(policy),
+						      &error);
+		if (err) {
+			fprintf(stderr, "%s\n", error);
+			free(error);
+			goto j_put;
+		}
+	}
+
+	if (!resmon_ctl_validate_jsonrpc(values[pol_jsonrpc])) {
+		fprintf(stderr, "Unsupported jsonrpc version: %s\n",
+			json_object_to_json_string(values[pol_jsonrpc]));
+		goto j_put;
+	}
+
+	if (!resmon_ctl_validate_id(values[pol_id], expect_id)) {
+		fprintf(stderr, "Unknown response ID: %s\n",
+			json_object_to_json_string(values[pol_id]));
+		goto j_put;
+	}
+
+	struct json_object *error = values[pol_error];
+	struct json_object *result = values[pol_result];
+	if (error != NULL && result != NULL) {
+		fprintf(stderr, "Both error and result present in jsonrpc response.\n");
+		goto j_put;
+	} else if (error == NULL && result == NULL) {
+		fprintf(stderr, "Neither error nor result present in jsonrpc response.\n");
+		goto j_put;
+	}
+
+	if (error)
+		resmon_ctl_handle_response_error(error);
+	else if (json_object_get_boolean(values[pol_result]))
+		err = 0;
+	else
+		err = -1;
+
+j_put:
+	json_object_put(j);
+	return err;
 }
 
 static int resmon_ctl_recv(int fd, struct sockaddr *sa, socklen_t *sasz,
@@ -473,57 +691,62 @@ static int resmon_ctl_activity(int fd)
 {
 	struct sockaddr_un sa = {};
 	socklen_t sasz = sizeof sa;
-	char *buf = NULL;
-	int err = resmon_ctl_recv(fd, (struct sockaddr *) &sa, &sasz, &buf);
+	char *request = NULL;
+	int err = resmon_ctl_recv(fd, (struct sockaddr *) &sa, &sasz, &request);
 	if (err < 0)
 		return err;
 
+	fprintf(stderr, "activity: '%s'\n", request);
 
-	fprintf(stderr, "activity: '%s'\n", buf);
+	struct json_object *j = json_tokener_parse(request);
+	if (j == NULL) {
+		resmon_ctl_respond_invalid(fd, (struct sockaddr *) &sa, sasz,
+					   NULL, NULL);
+		goto out;
+	}
 
-	struct json_object *method = NULL;
-	struct json_object *params = NULL;
-	struct json_object *id = NULL;
-	bool invalid = false;
-
-	struct json_object *j = json_tokener_parse(buf);
-	if (j == NULL)
-		invalid = true;
-	else {
-		for (struct json_object_iterator it = json_object_iter_begin(j),
-			     et = json_object_iter_end(j);
-		     !json_object_iter_equal(&it, &et);
-		     json_object_iter_next(&it)) {
-			const char *key = json_object_iter_peek_name(&it);
-			struct json_object *val = json_object_iter_peek_value(&it);
-			if (strcmp(key, "method") == 0)
-				method = val;
-			else if (strcmp(key, "params") == 0)
-				params = val;
-			else if (strcmp(key, "id") == 0)
-				id = val;
-			else if (strcmp(key, "jsonrpc") == 0) {
-				if (!resmon_ctl_validate_jsonrpc(val))
-					invalid = true;
-			} else {
-				invalid = true;
-				break;
-			}
+	enum policy {
+		pol_jsonrpc,
+		pol_id,
+		pol_method,
+		pol_params,
+	};
+	struct resmon_ctl_policy policy[] = {
+		[pol_jsonrpc] = { .key = "jsonrpc", .type = json_type_string },
+		[pol_id] =      { .key = "id", .any_type = true,
+				  .required = true },
+		[pol_method] =  { .key = "method", .type = json_type_string,
+				  .required = true },
+		[pol_params] =  { .key = "params", .any_type = true },
+	};
+	struct json_object *values[ARRAY_SIZE(policy)];
+	{
+		char *error = NULL;
+		err = resmon_ctl_parse_jsonrpc_object("request", j,
+						      policy, values,
+						      ARRAY_SIZE(policy),
+						      &error);
+		if (err) {
+			resmon_ctl_respond_invalid(fd, (struct sockaddr *) &sa,
+						   sasz, NULL, error);
+			free(error);
+			goto out;
 		}
 	}
 
-	if (invalid)
+	if (values[pol_jsonrpc] &&
+	    !resmon_ctl_validate_jsonrpc(values[pol_jsonrpc])) {
 		resmon_ctl_respond_invalid(fd, (struct sockaddr *) &sa, sasz,
-					   id);
-	else if (method != NULL)
-		resmon_ctl_handle_method(fd, (struct sockaddr *) &sa, sasz,
-					 method, params, id);
-	else
-		/* No method => not a request. */
-		resmon_ctl_respond_invalid(fd, (struct sockaddr *) &sa, sasz,
-					   id);
+					   NULL, "Invalid JSON RPC version");
+		goto out;
+	}
 
-	free(buf);
+	resmon_ctl_handle_method(fd, (struct sockaddr *) &sa, sasz,
+				 json_object_get_string(values[pol_method]),
+				 values[pol_params], values[pol_id]);
+
+out:
+	free(request);
 	return 0;
 }
 
@@ -650,53 +873,36 @@ static int resmon_stop(int argc, char **argv)
 
 	struct sockaddr_un sa = resmon_ctl_sockaddr();
 	err = connect(fd, &sa, sizeof sa);
-	if (err) {
+	if (err != 0) {
 		fprintf(stderr, "Failed to connect to %s: %m\n",
 			sa.sun_path);
 		goto close_fd;
 	}
 
-	struct json_object *id = json_object_new_int(1);
-	if (id == NULL) {
-		fprintf(stderr, "Failed to allocate an ID object.\n");
+	const int id = 1;
+	struct json_object *request = resmon_ctl_request_object(id, "quit");
+	if (request == NULL) {
+		err = -1;
 		goto close_fd;
 	}
 
-	struct json_object *query = resmon_ctl_jsonrpc_object(id);
-	if (query == NULL) {
-		fprintf(stderr, "Failed to allocate a request object.\n");
-		goto free_id;
-	}
-	id = NULL;
-
-	if (resmon_ctl_object_attach(query, "method",
-				     json_object_new_string("quit"))) {
-		fprintf(stderr, "Failed to form a request object.\n");
-		goto put_query;
-	}
-
-	err = resmon_ctl_send(fd, (struct sockaddr *) &sa, sizeof sa, query);
+	err = resmon_ctl_send(fd, (struct sockaddr *) &sa, sizeof sa, request);
 	if (err < 0) {
 		fprintf(stderr, "Failed to send the RPC message: %m\n");
-		goto put_query;
+		goto put_request;
 	}
 
-	char *buf = NULL;
-	err = resmon_ctl_recv(fd, NULL, NULL, &buf);
+	char *response = NULL;
+	err = resmon_ctl_recv(fd, NULL, NULL, &response);
 	if (err < 0) {
 		fprintf(stderr, "Failed to receive an RPC response\n");
-		goto put_query;
+		goto put_request;
 	}
 
-	fprintf(stderr, "response: '%s'\n", buf);
-	err = 0;
-
-	free(buf);
-put_query:
-	json_object_put(query);
-free_id:
-	if (id != NULL)
-		json_object_put(id);
+	err = resmon_ctl_handle_response(response, id);
+	free(response);
+put_request:
+	json_object_put(request);
 close_fd:
 	resmon_socket_close(resmon_cli_sockaddr(), fd);
 	return err;
