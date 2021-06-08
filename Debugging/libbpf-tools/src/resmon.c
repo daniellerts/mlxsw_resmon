@@ -8,7 +8,6 @@
 #include <stdio.h>
 #include <time.h>
 #include <unistd.h>
-#include <arpa/inet.h>
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
 #include <json-c/json_object.h>
@@ -22,6 +21,7 @@
 #include <sys/un.h>
 
 #include "resmon.h"
+#include "resmon-bpf.h"
 #include "resmon.skel.h"
 #include "trace_helpers.h"
 
@@ -92,18 +92,6 @@ static void resmon_print_stats(struct bpf_map *counters)
 		else
 			fprintf(stdout, "%-40s ???\n", counter_descriptions[i]);
 	}
-}
-
-static bool matches(const char *prefix, const char *string)
-{
-	if (!*prefix)
-		return true;
-	while (*string && *prefix == *string) {
-		prefix++;
-		string++;
-	}
-
-	return !!*prefix;
 }
 
 static unsigned int resmon_fmt_path(char *buf, size_t size,
@@ -200,7 +188,7 @@ static int resmon_common_args(int argc, char **argv,
 			      int (*and_then)(int argc, char **argv))
 {
 	while (argc) {
-		if (matches(*argv, "help") == 0) {
+		if (strcmp(*argv, "help") == 0) {
 			return resmon_help();
 		} else {
 			break;
@@ -225,254 +213,64 @@ static int resmon_common_args_only(int argc, char **argv,
 	return and_then();
 }
 
-static struct sockaddr_un resmon_ctl_sockaddr(void)
-{
-	return (struct sockaddr_un) {
-		.sun_family = AF_LOCAL,
-		.sun_path = "/var/run/resmon.ctl",
-	};
-}
-
-static struct sockaddr_un resmon_cli_sockaddr(void)
-{
-	static struct sockaddr_un sa = {};
-	if (sa.sun_family == AF_UNSPEC) {
-		snprintf(sa.sun_path, sizeof sa.sun_path,
-			 "/var/run/resmon.cli.%d", getpid());
-		sa.sun_family = AF_LOCAL;
-	}
-	return sa;
-}
-
-static int resmon_socket_open(struct sockaddr_un sa)
-{
-	int fd = socket(AF_LOCAL, SOCK_DGRAM, 0);
-	if (fd < 0) {
-		fprintf(stderr, "Failed to create control socket: %m\n");
-		return -1;
-	}
-
-	unlink(sa.sun_path);
-
-	int err = bind(fd, (struct sockaddr *) &sa, sizeof sa);
-	if (err < 0) {
-		fprintf(stderr, "Failed to bind control socket: %m\n");
-		goto close_fd;
-	}
-
-	return fd;
-
-close_fd:
-	close(fd);
-	return err;
-}
-
-static void resmon_socket_close(struct sockaddr_un sa, int fd)
-{
-	close(fd);
-	unlink(sa.sun_path);
-}
-
-static int resmon_ctl_open(void)
-{
-	return resmon_socket_open(resmon_ctl_sockaddr());
-}
-
-static void resmon_ctl_close(int fd)
-{
-	return resmon_socket_close(resmon_ctl_sockaddr(), fd);
-}
-
-static int resmon_ctl_send(int fd, struct sockaddr *sa, size_t sasz,
-			   struct json_object *obj)
-{
-	const char *str = json_object_to_json_string(obj);
-	size_t len = strlen(str);
-	int rc = sendto(fd, str, len, 0, sa, sasz);
-	return rc == len ? 0 : -1;
-}
-
-static int resmon_ctl_object_attach(struct json_object *obj,
-				    const char *key,
-				    struct json_object *val_obj)
-{
-	if (val_obj == NULL)
-		return -1;
-
-	int rc = json_object_object_add(obj, key, val_obj);
-	if (rc < 0) {
-		json_object_put(val_obj);
-		return -1;
-	}
-
-	return 0;
-}
-
-static struct json_object *resmon_ctl_jsonrpc_object(struct json_object *id)
-{
-	struct json_object *obj = json_object_new_object();
-	if (obj == NULL)
-		return NULL;
-
-	if (resmon_ctl_object_attach(obj, "jsonrpc",
-				     json_object_new_string("2.0")) ||
-	    /* Note: ID is allowed to be NULL, so use json_object_object_add. */
-	    json_object_object_add(obj, "id", id))
-		goto err_put_obj;
-
-	return obj;
-
-err_put_obj:
-	json_object_put(obj);
-	return NULL;
-}
-
-static struct json_object *resmon_ctl_request_object(int id, const char *method)
-{
-	struct json_object *id_obj = json_object_new_int(id);
-	if (id_obj == NULL) {
-		fprintf(stderr, "Failed to allocate an ID object.\n");
-		return NULL;
-	}
-
-	struct json_object *request = resmon_ctl_jsonrpc_object(id_obj);
-	if (request == NULL) {
-		fprintf(stderr, "Failed to allocate a request object.\n");
-		goto put_id;
-	}
-	id_obj = NULL;
-
-	if (resmon_ctl_object_attach(request, "method",
-				     json_object_new_string(method))) {
-		fprintf(stderr, "Failed to form a request object.\n");
-		goto put_request;
-	}
-
-	return request;
-
-put_request:
-	json_object_put(request);
-put_id:
-	json_object_put(id_obj);
-	return NULL;
-}
-
-static int resmon_ctl_object_attach_error(struct json_object *obj,
-					  int code, const char *message,
-					  const char *data)
-{
-	struct json_object *err_obj = json_object_new_object();
-	if (err_obj == NULL)
-		return -1;
-
-	if (resmon_ctl_object_attach(err_obj, "code",
-				     json_object_new_int(code)) ||
-	    resmon_ctl_object_attach(err_obj, "message",
-				     json_object_new_string(message)))
-		goto err_put_obj;
-
-	if (data)
-		/* Allow this to fail, the error object is valid without it. */
-		resmon_ctl_object_attach(err_obj, "data",
-					 json_object_new_string(data));
-
-	return resmon_ctl_object_attach(obj, "error", err_obj);
-
-err_put_obj:
-	json_object_put(obj);
-	return -1;
-}
-
-static int resmon_ctl_object_attach_result(struct json_object *obj,
-					   struct json_object *val_obj)
-{
-	int rc = json_object_object_add(obj, "result", val_obj);
-	if (rc)
-		json_object_put(val_obj);
-	return rc;
-}
-
-static void resmon_ctl_respond_invalid(int fd, struct sockaddr *sa, size_t sasz,
+static void resmon_ctl_respond_invalid(struct resmon_sock *ctl,
 				       struct json_object *id, const char *data)
 {
-	struct json_object *obj = resmon_ctl_jsonrpc_object(id);
-	if (obj == NULL)
-		return;
-
-	if (resmon_ctl_object_attach_error(obj, -32600, "Invalid Request",
-					   data))
-		goto err_put_obj;
-
-	resmon_ctl_send(fd, sa, sasz, obj);
-
-err_put_obj:
-	json_object_put(obj);
+	resmon_jrpc_take_send(ctl,
+		    resmon_jrpc_new_error(id, -32600, "Invalid Request", data));
 }
 
-static void resmon_ctl_respond_method_nf(int fd, struct sockaddr *sa,
-					 size_t sasz, struct json_object *id,
+static void resmon_ctl_respond_method_nf(struct resmon_sock *peer,
+					 struct json_object *id,
 					 const char *method)
 {
-	struct json_object *obj = resmon_ctl_jsonrpc_object(id);
-	if (obj == NULL)
-		return;
-
-	if (resmon_ctl_object_attach_error(obj, -32601, "Method not found",
-					   method))
-		goto err_put_obj;
-
-	resmon_ctl_send(fd, sa, sasz, obj);
-
-err_put_obj:
-	json_object_put(obj);
+	resmon_jrpc_take_send(peer,
+		    resmon_jrpc_new_error(id, -32601, "Method not found",
+					  method));
 }
 
-static void resmon_ctl_handle_echo(int fd, struct sockaddr *sa, size_t sasz,
+static void resmon_ctl_handle_echo(struct resmon_sock *peer,
 				   struct json_object *params_obj,
 				   struct json_object *id)
 {
-	struct json_object *obj = resmon_ctl_jsonrpc_object(id);
+	struct json_object *obj = resmon_jrpc_new_object(id);
 	if (obj == NULL)
 		return;
 
-	if (resmon_ctl_object_attach_result(obj, json_object_get(params_obj)))
-		goto err_put_obj;
+	if (resmon_jrpc_object_take_add(obj, "result",
+					json_object_get(params_obj)))
+		return;
 
-	resmon_ctl_send(fd, sa, sasz, obj);
-
-err_put_obj:
-	json_object_put(obj);
+	resmon_jrpc_take_send(peer, obj);
 }
 
-static void resmon_ctl_handle_quit(int fd, struct sockaddr *sa, size_t sasz,
+static void resmon_ctl_handle_quit(struct resmon_sock *peer,
 				   struct json_object *params_obj,
 				   struct json_object *id)
 {
-	struct json_object *obj = resmon_ctl_jsonrpc_object(id);
+	struct json_object *obj = resmon_jrpc_new_object(id);
 	if (obj == NULL)
 		return;
 
-	if (resmon_ctl_object_attach_result(obj, json_object_new_boolean(true)))
-		goto err_put_obj;
+	if (resmon_jrpc_object_take_add(obj, "result",
+					json_object_new_boolean(true)))
+		return;
 
-	resmon_ctl_send(fd, sa, sasz, obj);
+	resmon_jrpc_take_send(peer, obj);
 	should_quit = true;
-
-err_put_obj:
-	json_object_put(obj);
 }
 
-static void resmon_ctl_handle_method(int fd, struct sockaddr *sa, size_t sasz,
+static void resmon_ctl_handle_method(struct resmon_sock *peer,
 				     const char *method,
 				     struct json_object *params_obj,
 				     struct json_object *id)
 {
 	if (strcmp(method, "ping") == 0)
-		return resmon_ctl_handle_echo(fd, sa, sasz, params_obj, id);
+		return resmon_ctl_handle_echo(peer, params_obj, id);
 	else if (strcmp(method, "quit") == 0)
-		return resmon_ctl_handle_quit(fd, sa, sasz, params_obj, id);
+		return resmon_ctl_handle_quit(peer, params_obj, id);
 	else
-		return resmon_ctl_respond_method_nf(fd, sa, sasz, id, method);
+		return resmon_ctl_respond_method_nf(peer, id, method);
 }
 
 static bool resmon_ctl_validate_jsonrpc(struct json_object *ver_obj)
@@ -597,9 +395,9 @@ static void resmon_cli_handle_response_error(struct json_object *error_obj)
 			json_object_get_string(values[pol_message]));
 }
 
-static struct json_object *resmon_cli_handle_response(struct json_object *j,
-						      int expect_id,
-						      enum json_type result_type)
+static struct json_object *
+resmon_cli_handle_response(struct json_object *j,
+			   int expect_id, enum json_type result_type)
 {
 	int err = -1;
 
@@ -657,59 +455,25 @@ static struct json_object *resmon_cli_handle_response(struct json_object *j,
 		return NULL;
 	}
 
-	return result;
+	return json_object_get(result);
 }
 
-static int resmon_ctl_recv(int fd, struct sockaddr *sa, socklen_t *sasz,
-			   char **bufp)
+static int resmon_ctl_activity(struct resmon_sock *ctl)
 {
 	int err;
-	ssize_t msgsz = recvfrom(fd, NULL, 0, MSG_PEEK | MSG_TRUNC,
-				 sa, sasz);
-	if (msgsz < 0) {
-		fprintf(stderr, "Failed to receive data on control socket: %m\n");
-		return -1;
-	}
 
-	char *buf = calloc(1, msgsz + 1);
-	if (buf == NULL) {
-		fprintf(stderr, "Failed to allocate control message buffer: %m\n");
-		return -1;
-	}
-
-	ssize_t n = recv(fd, buf, msgsz, 0);
-	if (n < 0) {
-		fprintf(stderr, "Failed to receive data on control socket: %m\n");
-		err = -1;
-		goto out;
-	}
-	buf[n] = '\0';
-
-	*bufp = buf;
-	buf = NULL;
-	err = 0;
-
-out:
-	free(buf);
-	return err;
-}
-
-static int resmon_ctl_activity(int fd)
-{
-	struct sockaddr_un sa = {};
-	socklen_t sasz = sizeof sa;
+	struct resmon_sock peer;
 	char *request = NULL;
-	int err = resmon_ctl_recv(fd, (struct sockaddr *) &sa, &sasz, &request);
+	err = resmon_sock_recv(ctl, &peer, &request);
 	if (err < 0)
 		return err;
 
 	fprintf(stderr, "activity: '%s'\n", request);
 
-	struct json_object *j = json_tokener_parse(request);
-	if (j == NULL) {
-		resmon_ctl_respond_invalid(fd, (struct sockaddr *) &sa, sasz,
-					   NULL, NULL);
-		goto out;
+	struct json_object *request_obj = json_tokener_parse(request);
+	if (request_obj == NULL) {
+		resmon_ctl_respond_invalid(&peer, NULL, NULL);
+		goto free_req;
 	}
 
 	enum policy {
@@ -729,30 +493,31 @@ static int resmon_ctl_activity(int fd)
 	struct json_object *values[ARRAY_SIZE(policy)];
 	{
 		char *error = NULL;
-		err = resmon_ctl_parse_jsonrpc_object("request", j,
+		err = resmon_ctl_parse_jsonrpc_object("request", request_obj,
 						      policy, values,
 						      ARRAY_SIZE(policy),
 						      &error);
 		if (err) {
-			resmon_ctl_respond_invalid(fd, (struct sockaddr *) &sa,
-						   sasz, NULL, error);
+			resmon_ctl_respond_invalid(&peer, NULL, error);
 			free(error);
-			goto out;
+			goto put_req_obj;
 		}
 	}
 
 	if (values[pol_jsonrpc] &&
 	    !resmon_ctl_validate_jsonrpc(values[pol_jsonrpc])) {
-		resmon_ctl_respond_invalid(fd, (struct sockaddr *) &sa, sasz,
-					   NULL, "Invalid JSON RPC version");
-		goto out;
+		resmon_ctl_respond_invalid(&peer, NULL,
+					   "Invalid JSON RPC version");
+		goto put_req_obj;
 	}
 
-	resmon_ctl_handle_method(fd, (struct sockaddr *) &sa, sasz,
+	resmon_ctl_handle_method(&peer,
 				 json_object_get_string(values[pol_method]),
 				 values[pol_params], values[pol_id]);
 
-out:
+put_req_obj:
+	json_object_put(request_obj);
+free_req:
 	free(request);
 	return 0;
 }
@@ -771,14 +536,16 @@ static int resmon_loop(void)
 	if (err)
 		goto destroy_out;
 
-	int fd = resmon_ctl_open();
-	if (fd < 0) {
-		err = fd;
+	struct resmon_sock ctl;
+	err = resmon_ctl_open(&ctl);
+	if (err)
 		goto stop_out;
-	}
+
+	if (env.verbosity > 0)
+		fprintf(stderr, "Listening on %s\n", ctl.sa.sun_path);
 
 	struct pollfd pollfd = {
-		.fd = fd,
+		.fd = ctl.fd,
 		.events = POLLIN,
 	};
 
@@ -797,7 +564,8 @@ static int resmon_loop(void)
 				goto out;
 			}
 			if (pollfd.revents & POLLIN) {
-				err = resmon_ctl_activity(pollfd.fd);
+				assert(pollfd.fd == ctl.fd);
+				err = resmon_ctl_activity(&ctl);
 				if (err)
 					goto out;
 			}
@@ -805,7 +573,7 @@ static int resmon_loop(void)
 	}
 
 out:
-	resmon_ctl_close(fd);
+	resmon_ctl_close(&ctl);
 stop_out:
 	resmon_bpf_stop(obj);
 destroy_out:
@@ -872,28 +640,22 @@ static struct json_object *resmon_cli_send_request(struct json_object *request)
 	struct json_object *response_obj = NULL;
 	int err = -1;
 
-	int fd = resmon_socket_open(resmon_cli_sockaddr());
-	if (fd < 0) {
+	struct resmon_sock cli;
+	struct resmon_sock peer;
+	err = resmon_cli_open(&cli, &peer);
+	if (err < 0) {
 		fprintf(stderr, "Failed to open a socket: %m\n");
 		return NULL;
 	}
 
-	struct sockaddr_un sa = resmon_ctl_sockaddr();
-	err = connect(fd, &sa, sizeof sa);
-	if (err != 0) {
-		fprintf(stderr, "Failed to connect to %s: %m\n",
-			sa.sun_path);
-		goto close_fd;
-	}
-
-	err = resmon_ctl_send(fd, (struct sockaddr *) &sa, sizeof sa, request);
+	err = resmon_jrpc_take_send(&peer, json_object_get(request));
 	if (err < 0) {
 		fprintf(stderr, "Failed to send the RPC message: %m\n");
 		goto close_fd;
 	}
 
-	char *response = NULL;
-	err = resmon_ctl_recv(fd, NULL, NULL, &response);
+	char *response;
+	err = resmon_sock_recv(&cli, &peer, &response);
 	if (err < 0) {
 		fprintf(stderr, "Failed to receive an RPC response\n");
 		goto close_fd;
@@ -908,7 +670,7 @@ static struct json_object *resmon_cli_send_request(struct json_object *request)
 free_response:
 	free(response);
 close_fd:
-	resmon_socket_close(resmon_cli_sockaddr(), fd);
+	resmon_cli_close(&cli);
 	return response_obj;
 }
 
@@ -917,7 +679,7 @@ static int resmon_cli_do_stop(void)
 	int err;
 
 	const int id = 1;
-	struct json_object *request = resmon_ctl_request_object(id, "quit");
+	struct json_object *request = resmon_jrpc_new_request(id, "quit");
 	if (request == NULL)
 		return -1;
 
@@ -927,8 +689,8 @@ static int resmon_cli_do_stop(void)
 		goto put_request;
 	}
 
-	struct json_object *result = resmon_cli_handle_response(response, id,
-							    json_type_boolean);
+	struct json_object *result =
+		resmon_cli_handle_response(response, id, json_type_boolean);
 	if (result == NULL) {
 		err = -1;
 		goto put_response;
@@ -944,6 +706,8 @@ static int resmon_cli_do_stop(void)
 		err = -1;
 	}
 
+
+	json_object_put(result);
 put_response:
 	json_object_put(response);
 put_request:
@@ -961,14 +725,14 @@ static int resmon_cli_do_ping(void)
 	int err;
 
 	const int id = 1;
-	struct json_object *request = resmon_ctl_request_object(id, "ping");
+	struct json_object *request = resmon_jrpc_new_request(id, "ping");
 	if (request == NULL)
 		return -1;
 
 	srand(time(NULL));
 	const int r = rand();
-	if (resmon_ctl_object_attach(request, "params",
-				     json_object_new_int(r))) {
+	if (resmon_jrpc_object_take_add(request, "params",
+					json_object_new_int(r))) {
 		fprintf(stderr, "Failed to form a request object.\n");
 		err = -1;
 		goto put_request;
@@ -992,14 +756,15 @@ static int resmon_cli_do_ping(void)
 		fprintf(stderr, "Unexpected ping response: sent %d, got %d.\n",
 			r, nr);
 		err = -1;
-		goto put_response;
+		goto put_result;
 	}
 
 	if (env.verbosity > 0)
 		fprintf(stderr, "resmond is alive\n");
-
 	err = 0;
 
+put_result:
+	json_object_put(result);
 put_response:
 	json_object_put(response);
 put_request:
@@ -1041,15 +806,15 @@ static int resmon_stats(int argc, char **argv)
 
 static int resmon_cmd(int argc, char **argv)
 {
-	if (!argc || matches(*argv, "help") == 0)
+	if (!argc || strcmp(*argv, "help") == 0)
 		return resmon_help();
-	else if (matches(*argv, "start") == 0)
+	else if (strcmp(*argv, "start") == 0)
 		return resmon_start(argc - 1, argv + 1);
-	else if (matches(*argv, "stop") == 0)
+	else if (strcmp(*argv, "stop") == 0)
 		return resmon_cli_stop(argc - 1, argv + 1);
-	else if (matches(*argv, "ping") == 0)
+	else if (strcmp(*argv, "ping") == 0)
 		return resmon_cli_ping(argc - 1, argv + 1);
-	else if (matches(*argv, "stats") == 0)
+	else if (strcmp(*argv, "stats") == 0)
 		return resmon_stats(argc - 1, argv + 1);
 
 	fprintf(stderr, "Unknown command \"%s\"\n", *argv);

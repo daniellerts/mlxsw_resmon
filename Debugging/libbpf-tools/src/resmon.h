@@ -2,51 +2,39 @@
 #ifndef RESMON_H
 #define RESMON_H
 
-#define RESMON_COUNTER_EXPAND_AS_ENUM(NAME, DESCRIPTION) \
-	RESMON_COUNTER_ ## NAME,
-#define RESMON_COUNTER_EXPAND_AS_DESC(NAME, DESCRIPTION) \
-	DESCRIPTION,
-#define EXPAND_AS_PLUS1(...) \
-	+ 1
+#include <unistd.h>
+#include <sys/un.h>
 
-#define RESMON_COUNTERS(X) \
-	X(LPM_IPV4, "IPv4 LPM") \
-	X(LPM_IPV6, "IPv6 LPM") \
-	X(ATCAM, "ATCAM") \
-	X(ACTSET, "ACL Action Set")
+/* resmon-sock.c */
 
-enum resmon_counter {
-	RESMON_COUNTERS(RESMON_COUNTER_EXPAND_AS_ENUM)
-};
-enum { resmon_counter_count = 0 RESMON_COUNTERS(EXPAND_AS_PLUS1) };
-
-struct kvd_allocation {
-	unsigned int slots;
-	enum resmon_counter counter;
+struct resmon_sock {
+	int fd;
+	struct sockaddr_un sa;
+	socklen_t len;
 };
 
-struct ralue_key {
-	__u8 protocol;
-	__u8 prefix_len;
-	__u16 virtual_router;
-	__u8 dip[16];
-};
+int resmon_ctl_open(struct resmon_sock *ctl);
+void resmon_ctl_close(struct resmon_sock *ctl);
+int resmon_cli_open(struct resmon_sock *cli,
+		    struct resmon_sock *peer);
+void resmon_cli_close(struct resmon_sock *cli);
 
-struct ptar_key {
-	__u8 tcam_region_info[16];
-};
+int resmon_sock_recv(struct resmon_sock *sock,
+		     struct resmon_sock *peer,
+		     char **bufp);
 
-struct ptce3_key {
-	__u8 tcam_region_info[16];
-	__u8 flex2_key_blocks[96];
-	__u8 delta_mask;
-	__u8 delta_value;
-	__u16 delta_start;
-	__u8 erp_id;
-};
+/* resmon-jrpc.c */
 
-struct kvdl_key {
-	__u32 index;
-};
+struct json_object *resmon_jrpc_new_object(struct json_object *id);
+struct json_object *resmon_jrpc_new_request(int id, const char *method);
+struct json_object *resmon_jrpc_new_error(struct json_object *id,
+					  int code,
+					  const char *message,
+					  const char *data);
+
+int resmon_jrpc_object_take_add(struct json_object *obj,
+				const char *key, struct json_object *val_obj);
+
+int resmon_jrpc_take_send(struct resmon_sock *sock, struct json_object *obj);
 
 #endif /* RESMON_H */

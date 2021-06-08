@@ -4,7 +4,7 @@
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_endian.h>
-#include "resmon.h"
+#include "resmon-bpf.h"
 #include "bits.bpf.h"
 
 #define EMAD_ETH_HDR_LEN		0x10
