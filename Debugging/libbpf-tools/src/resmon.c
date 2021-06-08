@@ -210,6 +210,21 @@ static int resmon_common_args(int argc, char **argv,
 	return and_then(argc, argv);
 }
 
+static int resmon_common_args_only_check(int argc, char **argv)
+{
+	return argc == 0 ? 0 : -1;
+}
+
+static int resmon_common_args_only(int argc, char **argv,
+			      int (*and_then)(void))
+{
+	int err = resmon_common_args(argc, argv,
+				     resmon_common_args_only_check);
+	if (err)
+		return err;
+	return and_then();
+}
+
 static struct sockaddr_un resmon_ctl_sockaddr(void)
 {
 	return (struct sockaddr_un) {
@@ -452,7 +467,7 @@ static void resmon_ctl_handle_method(int fd, struct sockaddr *sa, size_t sasz,
 				     struct json_object *params_obj,
 				     struct json_object *id)
 {
-	if (strcmp(method, "echo") == 0)
+	if (strcmp(method, "ping") == 0)
 		return resmon_ctl_handle_echo(fd, sa, sasz, params_obj, id);
 	else if (strcmp(method, "quit") == 0)
 		return resmon_ctl_handle_quit(fd, sa, sasz, params_obj, id);
@@ -543,7 +558,7 @@ static int resmon_ctl_parse_jsonrpc_object(const char *what,
 	return 0;
 }
 
-static void resmon_ctl_handle_response_error(struct json_object *error_obj)
+static void resmon_cli_handle_response_error(struct json_object *error_obj)
 {
 	enum policy {
 		pol_code,
@@ -582,15 +597,11 @@ static void resmon_ctl_handle_response_error(struct json_object *error_obj)
 			json_object_get_string(values[pol_message]));
 }
 
-static int resmon_ctl_handle_response(const char *str, int expect_id)
+static struct json_object *resmon_cli_handle_response(struct json_object *j,
+						      int expect_id,
+						      enum json_type result_type)
 {
 	int err = -1;
-
-	struct json_object *j = json_tokener_parse(str);
-	if (j == NULL) {
-		fprintf(stderr, "Failed to parse RPC response as JSON.\n");
-		return -1;
-	}
 
 	enum policy {
 		pol_jsonrpc,
@@ -603,7 +614,7 @@ static int resmon_ctl_handle_response(const char *str, int expect_id)
 		[pol_id] =      { .key = "id", .any_type = true,
 				  .required = true },
 		[pol_error] =   { .key = "error", .type = json_type_object },
-		[pol_result] =  { .key = "result", .type = json_type_boolean },
+		[pol_result] =  { .key = "result", .type = result_type },
 	};
 	struct json_object *values[ARRAY_SIZE(policy)];
 	{
@@ -615,42 +626,38 @@ static int resmon_ctl_handle_response(const char *str, int expect_id)
 		if (err) {
 			fprintf(stderr, "%s\n", error);
 			free(error);
-			goto j_put;
+			return NULL;
 		}
 	}
 
 	if (!resmon_ctl_validate_jsonrpc(values[pol_jsonrpc])) {
 		fprintf(stderr, "Unsupported jsonrpc version: %s\n",
 			json_object_to_json_string(values[pol_jsonrpc]));
-		goto j_put;
+		return NULL;
 	}
 
 	if (!resmon_ctl_validate_id(values[pol_id], expect_id)) {
 		fprintf(stderr, "Unknown response ID: %s\n",
 			json_object_to_json_string(values[pol_id]));
-		goto j_put;
+		return NULL;
 	}
 
 	struct json_object *error = values[pol_error];
 	struct json_object *result = values[pol_result];
 	if (error != NULL && result != NULL) {
 		fprintf(stderr, "Both error and result present in jsonrpc response.\n");
-		goto j_put;
+		return NULL;
 	} else if (error == NULL && result == NULL) {
 		fprintf(stderr, "Neither error nor result present in jsonrpc response.\n");
-		goto j_put;
+		return NULL;
 	}
 
-	if (error)
-		resmon_ctl_handle_response_error(error);
-	else if (json_object_get_boolean(values[pol_result]))
-		err = 0;
-	else
-		err = -1;
+	if (error) {
+		resmon_cli_handle_response_error(error);
+		return NULL;
+	}
 
-j_put:
-	json_object_put(j);
-	return err;
+	return result;
 }
 
 static int resmon_ctl_recv(int fd, struct sockaddr *sa, socklen_t *sasz,
@@ -828,12 +835,9 @@ static int signals_setup(void)
 	return 0;
 }
 
-static int resmon_start_main(int argc, char **argv)
+static int resmon_do_start(void)
 {
 	int err;
-
-	if (argc)
-		return unknown_argument(*argv);
 
 	err = signals_setup();
 	if (err < 0)
@@ -851,24 +855,27 @@ static int resmon_start_main(int argc, char **argv)
 
 	err = resmon_loop();
 	if (err)
-		return err;
+		goto destroy_bpf;
 
+destroy_bpf:
 	resmon_bpf__destroy(obj);
 	return err;
 }
 
 static int resmon_start(int argc, char **argv)
 {
-	return resmon_common_args(argc, argv, resmon_start_main);
+	return resmon_common_args_only(argc, argv, resmon_do_start);
 }
 
-static int resmon_stop(int argc, char **argv)
+static struct json_object *resmon_cli_send_request(struct json_object *request)
 {
+	struct json_object *response_obj = NULL;
 	int err = -1;
+
 	int fd = resmon_socket_open(resmon_cli_sockaddr());
 	if (fd < 0) {
 		fprintf(stderr, "Failed to open a socket: %m\n");
-		return -1;
+		return NULL;
 	}
 
 	struct sockaddr_un sa = resmon_ctl_sockaddr();
@@ -879,33 +886,130 @@ static int resmon_stop(int argc, char **argv)
 		goto close_fd;
 	}
 
-	const int id = 1;
-	struct json_object *request = resmon_ctl_request_object(id, "quit");
-	if (request == NULL) {
-		err = -1;
-		goto close_fd;
-	}
-
 	err = resmon_ctl_send(fd, (struct sockaddr *) &sa, sizeof sa, request);
 	if (err < 0) {
 		fprintf(stderr, "Failed to send the RPC message: %m\n");
-		goto put_request;
+		goto close_fd;
 	}
 
 	char *response = NULL;
 	err = resmon_ctl_recv(fd, NULL, NULL, &response);
 	if (err < 0) {
 		fprintf(stderr, "Failed to receive an RPC response\n");
+		goto close_fd;
+	}
+
+	response_obj = json_tokener_parse(response);
+	if (response_obj == NULL) {
+		fprintf(stderr, "Failed to parse RPC response as JSON.\n");
+		goto free_response;
+	}
+
+free_response:
+	free(response);
+close_fd:
+	resmon_socket_close(resmon_cli_sockaddr(), fd);
+	return response_obj;
+}
+
+static int resmon_cli_do_stop(void)
+{
+	int err;
+
+	const int id = 1;
+	struct json_object *request = resmon_ctl_request_object(id, "quit");
+	if (request == NULL)
+		return -1;
+
+	struct json_object *response = resmon_cli_send_request(request);
+	if (response == NULL) {
+		err = -1;
 		goto put_request;
 	}
 
-	err = resmon_ctl_handle_response(response, id);
-	free(response);
+	struct json_object *result = resmon_cli_handle_response(response, id,
+							    json_type_boolean);
+	if (result == NULL) {
+		err = -1;
+		goto put_response;
+	}
+
+	if (json_object_get_boolean(result)) {
+		if (env.verbosity > 0)
+			fprintf(stderr, "resmond will stop\n");
+		err = 0;
+	} else {
+		if (env.verbosity > 0)
+			fprintf(stderr, "resmond refuses to stop\n");
+		err = -1;
+	}
+
+put_response:
+	json_object_put(response);
 put_request:
 	json_object_put(request);
-close_fd:
-	resmon_socket_close(resmon_cli_sockaddr(), fd);
 	return err;
+}
+
+static int resmon_cli_stop(int argc, char **argv)
+{
+	return resmon_common_args_only(argc, argv, resmon_cli_do_stop);
+}
+
+static int resmon_cli_do_ping(void)
+{
+	int err;
+
+	const int id = 1;
+	struct json_object *request = resmon_ctl_request_object(id, "ping");
+	if (request == NULL)
+		return -1;
+
+	srand(time(NULL));
+	const int r = rand();
+	if (resmon_ctl_object_attach(request, "params",
+				     json_object_new_int(r))) {
+		fprintf(stderr, "Failed to form a request object.\n");
+		err = -1;
+		goto put_request;
+	}
+
+	struct json_object *response = resmon_cli_send_request(request);
+	if (response == NULL) {
+		err = -1;
+		goto put_request;
+	}
+
+	struct json_object *result = resmon_cli_handle_response(response, id,
+								json_type_int);
+	if (result == NULL) {
+		err = -1;
+		goto put_response;
+	}
+
+	const int nr = json_object_get_int(result);
+	if (nr != r) {
+		fprintf(stderr, "Unexpected ping response: sent %d, got %d.\n",
+			r, nr);
+		err = -1;
+		goto put_response;
+	}
+
+	if (env.verbosity > 0)
+		fprintf(stderr, "resmond is alive\n");
+
+	err = 0;
+
+put_response:
+	json_object_put(response);
+put_request:
+	json_object_put(request);
+	return err;
+}
+
+static int resmon_cli_ping(int argc, char **argv)
+{
+	return resmon_common_args_only(argc, argv, resmon_cli_do_ping);
 }
 
 static int resmon_stats_main(int argc, char **argv)
@@ -939,10 +1043,12 @@ static int resmon_cmd(int argc, char **argv)
 {
 	if (!argc || matches(*argv, "help") == 0)
 		return resmon_help();
-	else if (matches(*argv, "__start__") == 0)
+	else if (matches(*argv, "start") == 0)
 		return resmon_start(argc - 1, argv + 1);
-	else if (matches(*argv, "__stop__") == 0)
-		return resmon_stop(argc - 1, argv + 1);
+	else if (matches(*argv, "stop") == 0)
+		return resmon_cli_stop(argc - 1, argv + 1);
+	else if (matches(*argv, "ping") == 0)
+		return resmon_cli_ping(argc - 1, argv + 1);
 	else if (matches(*argv, "stats") == 0)
 		return resmon_stats(argc - 1, argv + 1);
 
@@ -957,7 +1063,7 @@ static int resmon_help(void)
 	     "Usage: resmon [OPTIONS] { COMMAND | help }\n"
 	     "where  OPTIONS := [ -h | --help | -q | --quiet | -v | --verbose |\n"
              "                    -V | --version | --bpffs <PATH> ]\n"
-             "       COMMAND := { start | stop | restart | is-running | stats }\n"
+             "       COMMAND := { start | stop | ping | stats }\n"
 	     );
 	return 0;
 }
