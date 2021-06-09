@@ -2,6 +2,7 @@
 #ifndef RESMON_H
 #define RESMON_H
 
+#include <stdbool.h>
 #include <unistd.h>
 #include <sys/un.h>
 
@@ -32,9 +33,26 @@ struct json_object *resmon_jrpc_new_error(struct json_object *id,
 					  const char *message,
 					  const char *data);
 
+int resmon_jrpc_dissect_request(struct json_object *obj,
+				struct json_object **id,
+				const char **method,
+				struct json_object **params,
+				char **error);
+int resmon_jrpc_dissect_response(struct json_object *obj,
+				 struct json_object **id,
+				 struct json_object **result,
+				 bool *is_error,
+				 char **error);
+int resmon_jrpc_dissect_error(struct json_object *obj,
+			      int64_t *code,
+			      const char **message,
+			      struct json_object **data,
+			      char **error);
+
 int resmon_jrpc_object_take_add(struct json_object *obj,
 				const char *key, struct json_object *val_obj);
 
 int resmon_jrpc_take_send(struct resmon_sock *sock, struct json_object *obj);
+
 
 #endif /* RESMON_H */
