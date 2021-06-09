@@ -1,25 +1,8 @@
 // SPDX-License-Identifier: (LGPL-2.1 OR BSD-2-Clause)
-#define _GNU_SOURCE
 #include <argp.h>
-#include <assert.h>
-#include <inttypes.h>
-#include <poll.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <bpf/libbpf.h>
-#include <bpf/bpf.h>
-#include <json-c/json_object.h>
-#include <json-c/json_tokener.h>
-#include <json-c/json_util.h>
-#include <sys/resource.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <sys/un.h>
 
 #include "resmon.h"
-#include "resmon-bpf.h"
 #include "trace_helpers.h"
 
 struct resmon_env env = {
@@ -29,26 +12,7 @@ struct resmon_env env = {
 const char *program_version = "resmon 0.0";
 const char *program_bug_address = "<mlxsw@nvidia.com>";
 
-#define IS_ERR_VALUE(x) ((unsigned long)(void *)(x) >= (unsigned long)-1000)
-static inline bool IS_ERR(const void *ptr)
-{
-	return IS_ERR_VALUE((unsigned long)ptr);
-}
-
-static inline long PTR_ERR(const void *ptr)
-{
-	return (long) ptr;
-}
-
 static int resmon_help(void);
-
-int resmon_print_fn(enum libbpf_print_level level, const char *format,
-		    va_list args)
-{
-	if ((int)level > env.verbosity)
-		return 0;
-	return vfprintf(stderr, format, args);
-}
 
 static int resmon_common_args(int argc, char **argv,
 			      int (*and_then)(int argc, char **argv))
@@ -164,8 +128,6 @@ int main(int argc, char **argv)
 
 	argc -= optind;
 	argv += optind;
-
-	libbpf_set_print(resmon_print_fn);
 
 	return resmon_cmd(argc, argv);
 }

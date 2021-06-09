@@ -3,6 +3,7 @@
 #define RESMON_H
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <unistd.h>
 #include <sys/un.h>
 

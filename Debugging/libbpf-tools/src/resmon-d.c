@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: (LGPL-2.1 OR BSD-2-Clause)
 #include <assert.h>
 #include <poll.h>
 #include <signal.h>
@@ -32,6 +33,14 @@ static int resmon_d_setup_signals(void)
 		return -1;
 	}
 	return 0;
+}
+
+static int resmon_d_print_fn(enum libbpf_print_level level, const char *format,
+			     va_list args)
+{
+	if ((int)level > env.verbosity)
+		return 0;
+	return vfprintf(stderr, format, args);
 }
 
 static int resmon_d_start_bpf(struct resmon_bpf *obj)
@@ -215,6 +224,7 @@ int resmon_d_start(void)
 	if (err < 0)
 		return -1;
 
+	libbpf_set_print(resmon_d_print_fn);
 	struct resmon_bpf *obj = resmon_bpf__open();
 	if (!obj) {
 		fprintf(stderr, "Failed to open the resmon BPF object\n");
