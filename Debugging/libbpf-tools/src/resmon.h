@@ -6,6 +6,12 @@
 #include <unistd.h>
 #include <sys/un.h>
 
+/* resmon.c */
+extern struct resmon_env {
+	int verbosity;
+	const char *bpffs;
+} env;
+
 /* resmon-sock.c */
 
 struct resmon_sock {
@@ -14,11 +20,11 @@ struct resmon_sock {
 	socklen_t len;
 };
 
-int resmon_ctl_open(struct resmon_sock *ctl);
-void resmon_ctl_close(struct resmon_sock *ctl);
-int resmon_cli_open(struct resmon_sock *cli,
-		    struct resmon_sock *peer);
-void resmon_cli_close(struct resmon_sock *cli);
+int resmon_sock_open_d(struct resmon_sock *ctl);
+void resmon_sock_close_d(struct resmon_sock *ctl);
+int resmon_sock_open_c(struct resmon_sock *cli,
+		       struct resmon_sock *peer);
+void resmon_sock_close_c(struct resmon_sock *cli);
 
 int resmon_sock_recv(struct resmon_sock *sock,
 		     struct resmon_sock *peer,
@@ -54,5 +60,13 @@ int resmon_jrpc_object_take_add(struct json_object *obj,
 
 int resmon_jrpc_take_send(struct resmon_sock *sock, struct json_object *obj);
 
+/* resmon-c.c */
+
+int resmon_c_ping(void);
+int resmon_c_stop(void);
+
+/* resmon-d.c */
+
+int resmon_d_start(void);
 
 #endif /* RESMON_H */

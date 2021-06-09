@@ -64,18 +64,18 @@ static void resmon_sock_close(struct resmon_sock *sock)
 	unlink(sock->sa.sun_path);
 }
 
-int resmon_ctl_open(struct resmon_sock *ctl)
+int resmon_sock_open_d(struct resmon_sock *ctl)
 {
 	return resmon_sock_open(resmon_ctl_sockaddr(), ctl);
 }
 
-void resmon_ctl_close(struct resmon_sock *ctl)
+void resmon_sock_close_d(struct resmon_sock *ctl)
 {
 	resmon_sock_close(ctl);
 }
 
-int resmon_cli_open(struct resmon_sock *cli,
-		    struct resmon_sock *peer)
+int resmon_sock_open_c(struct resmon_sock *cli,
+		       struct resmon_sock *peer)
 {
 	int err = resmon_sock_open(resmon_cli_sockaddr(), cli);
 	if (err)
@@ -96,12 +96,12 @@ int resmon_cli_open(struct resmon_sock *cli,
 	return 0;
 
 close_cli:
-	resmon_cli_close(cli);
+	resmon_sock_close_c(cli);
 	return -1;
 
 }
 
-void resmon_cli_close(struct resmon_sock *cli)
+void resmon_sock_close_c(struct resmon_sock *cli)
 {
 	resmon_sock_close(cli);
 }
