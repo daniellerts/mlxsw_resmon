@@ -72,4 +72,22 @@ int resmon_c_stop(void);
 
 int resmon_d_start(void);
 
+/* resmon-ht.cc */
+
+struct resmon_ht;
+struct resmon_ht_kvd_alloc {
+	unsigned int slots;
+	// xxx enum resmon_counter counter;
+};
+
+struct resmon_ht *resmon_ht_create(void);
+void resmon_ht_destroy(struct resmon_ht *ht);
+
+void resmon_ht_ralue_update(struct resmon_ht *ht,
+			    uint8_t protocol,
+			    uint8_t prefix_len,
+			    uint16_t virtual_router,
+			    uint8_t dip[16],
+			    struct resmon_ht_kvd_alloc kvda);
+
 #endif /* RESMON_H */
