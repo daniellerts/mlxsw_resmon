@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: (LGPL-2.1 OR BSD-2-Clause)
 #include <assert.h>
+#include <errno.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdint.h>
@@ -10,7 +11,6 @@
 #include "resmon-bpf.h"
 #include "resmon.skel.h"
 #include "trace_helpers.h"
-#include "bpf_util.h"
 
 static bool should_quit = false;
 

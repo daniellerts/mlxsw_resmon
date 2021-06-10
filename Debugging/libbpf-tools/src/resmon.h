@@ -7,6 +7,8 @@
 #include <unistd.h>
 #include <sys/un.h>
 
+#define ARRAY_SIZE(x) (sizeof(x) / sizeof(*(x)))
+
 /* resmon.c */
 extern struct resmon_env {
 	int verbosity;
