@@ -95,6 +95,7 @@ resmon: $(OUTPUT)/resmon.o $(OUTPUT)/resmon-sock.o $(OUTPUT)/resmon-jrpc.o \
 		$(LIBBPF_OBJ) $(COMMON_OBJ) | $(OUTPUT) $(OUTPUT)/resmon.bpf.o
 	$(call msg,BINARY,$@)
 	$(Q)$(CC) $(CFLAGS) -lz $^ -o $@
+$(OUTPUT)/resmon-d.o: $(OUTPUT)/resmon.skel.h
 
 emadump: %: $(OUTPUT)/%.o $(LIBBPF_OBJ) $(COMMON_OBJ) | $(OUTPUT)
 	$(call msg,BINARY,$@)

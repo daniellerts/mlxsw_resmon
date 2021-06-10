@@ -201,6 +201,11 @@ struct {
 	__type(value, s64);
 } counters SEC(".maps");
 
+struct {
+	__uint(type, BPF_MAP_TYPE_RINGBUF);
+	__uint(max_entries, 256 * 1024 /* 256 KB */);
+} ringbuf SEC(".maps");
+
 static void __counter_adj(enum resmon_counter counter, u64 d)
 {
 	u32 index = counter;
@@ -476,6 +481,32 @@ static int handle_iedr(const u8 *payload)
 	return handle_iedr_record(&reg->record[0]);
 }
 
+static int push_to_ringbuf(const u8 *buf, size_t len)
+{
+	/*
+#define MLXSW_REG_RALUE_LEN 0x38
+#define MLXSW_REG_PTAR_LEN 0x30
+#define MLXSW_REG_PTCE3_LEN 0xF0
+#define MLXSW_REG_PEFA_LEN 0xB0
+#define MLXSW_REG_IEDR_LEN 0x210
+	*/
+
+	if (len > 1024)
+		return 0;
+
+	u8 *space = bpf_ringbuf_reserve(&ringbuf, 1024, 0);
+	if (!space)
+		return 0;
+
+	bpf_core_read(space, len, buf);
+	bpf_ringbuf_submit(space, 0);
+
+	const char fmt[] = "bublanina";
+	bpf_trace_printk(fmt, sizeof fmt);
+
+	return 0;
+}
+
 inline bool is_mlxsw_spectrum(struct devlink *devlink)
 {
 	static const char mlxsw_spectrum[] = "mlxsw_spectrum";
@@ -521,6 +552,15 @@ int BPF_PROG(handle__devlink_hwmsg,
         /* Filter out errors. */
 	if (op_tlv.status & EMAD_OP_TLV_STATUS_MASK)
 		return 0;
+
+	switch (bpf_ntohs(op_tlv.reg_id)) {
+	case 0x8013: /* MLXSW_REG_RALUE_ID */
+	case 0x3006: /* MLXSW_REG_PTAR_ID */
+	case 0x3027: /* MLXSW_REG_PTCE3_ID */
+	case 0x300F: /* MLXSW_REG_PEFA_ID */
+	case 0x3804: /* MLXSW_REG_IEDR_ID */
+		return push_to_ringbuf(buf, len);
+	};
 
 	buf += tlv_head.length * 4;
 	bpf_core_read(&reg_tlv, sizeof reg_tlv, buf);

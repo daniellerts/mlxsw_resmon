@@ -10,6 +10,7 @@
 #include "resmon-bpf.h"
 #include "resmon.skel.h"
 #include "trace_helpers.h"
+#include "bpf_util.h"
 
 static bool should_quit = false;
 
@@ -41,36 +42,6 @@ static int resmon_d_print_fn(enum libbpf_print_level level, const char *format,
 	if ((int)level > env.verbosity)
 		return 0;
 	return vfprintf(stderr, format, args);
-}
-
-static int resmon_d_start_bpf(struct resmon_bpf *obj)
-{
-	int err;
-
-	err = bump_memlock_rlimit();
-	if (err) {
-		fprintf(stderr, "Failed to increase rlimit: %d\n", err);
-		return err;
-	}
-
-	err = resmon_bpf__load(obj);
-	if (err) {
-		fprintf(stderr, "Failed to open & load BPF object\n");
-		return err;
-	}
-
-	err = resmon_bpf__attach(obj);
-	if (err) {
-		fprintf(stderr, "Failed to attach BPF program\n");
-		return err;
-	}
-
-	return 0;
-}
-
-static void resmon_d_stop_bpf(struct resmon_bpf *obj)
-{
-	resmon_bpf__detach(obj);
 }
 
 static void resmon_d_respond_invalid(struct resmon_sock *ctl, const char *data)
@@ -131,7 +102,7 @@ static void resmon_d_handle_method(struct resmon_sock *peer,
 		return resmon_d_respond_method_nf(peer, id, method);
 }
 
-static int resmon_d_activity(struct resmon_sock *ctl)
+static int resmon_d_ctl_activity(struct resmon_sock *ctl)
 {
 	int err;
 
@@ -171,7 +142,13 @@ free_req:
 	return 0;
 }
 
-static int resmon_d_loop(struct resmon_bpf *obj)
+static int resmon_d_rb_activity(void *ctx, void *data, size_t len)
+{
+	fprintf(stderr, "process_sample len %zd\n", len);
+	return 0;
+}
+
+static int resmon_d_loop(struct resmon_bpf *obj, struct ring_buffer *ringbuf)
 {
 	int err;
 
@@ -183,30 +160,48 @@ static int resmon_d_loop(struct resmon_bpf *obj)
 	if (env.verbosity > 0)
 		fprintf(stderr, "Listening on %s\n", ctl.sa.sun_path);
 
-	struct pollfd pollfd = {
-		.fd = ctl.fd,
-		.events = POLLIN,
+	struct pollfd pollfds[] = {
+		{
+			.fd = ctl.fd,
+			.events = POLLIN,
+		},
+		{
+			.fd = ring_buffer__epoll_fd(ringbuf),
+			.events = POLLIN,
+		},
 	};
 
 	while (!should_quit) {
-		int nfds = poll(&pollfd, 1, 100 /*ms*/);
-		if (nfds < 0) {
+		int nfds = poll(pollfds, ARRAY_SIZE(pollfds), 100 /*ms*/);
+		if (nfds < 0 && errno != EINTR) {
 			fprintf(stderr, "Failed to poll: %m\n");
 			err = nfds;
 			goto out;
 		}
-		if (nfds != 0) {
-			assert(nfds == 1);
-			if (pollfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
-				fprintf(stderr, "Control socket error: %m\n");
+		if (nfds == 0)
+			continue;
+		for (size_t i = 0; i < ARRAY_SIZE(pollfds); i++) {
+			struct pollfd *pollfd = &pollfds[i];
+
+			if (pollfd->revents & (POLLERR | POLLHUP |
+					       POLLNVAL)) {
+				fprintf(stderr,
+					"Problem on pollfd %zd: %m\n", i);
 				err = -1;
 				goto out;
 			}
-			if (pollfd.revents & POLLIN) {
-				assert(pollfd.fd == ctl.fd);
-				err = resmon_d_activity(&ctl);
-				if (err)
-					goto out;
+			if (pollfd->revents & POLLIN) {
+				fprintf(stderr, "Activity on pollfd %zd\n", i);
+				if (i == 0) {
+					err = resmon_d_ctl_activity(&ctl);
+					if (err)
+						goto out;
+				}
+				if (i == 1) {
+					err = ring_buffer__consume(ringbuf);
+					if (err < 0)
+						goto out;
+				}
 			}
 		}
 	}
@@ -224,20 +219,44 @@ int resmon_d_start(void)
 	if (err < 0)
 		return -1;
 
+	err = bump_memlock_rlimit();
+	if (err) {
+		fprintf(stderr, "Failed to increase rlimit: %d\n", err);
+		return -1;
+	}
+
 	libbpf_set_print(resmon_d_print_fn);
+
 	struct resmon_bpf *obj = resmon_bpf__open();
 	if (!obj) {
 		fprintf(stderr, "Failed to open the resmon BPF object\n");
 		return -1;
 	}
 
-	err = resmon_d_start_bpf(obj);
-	if (err)
-		return err;
+	err = resmon_bpf__load(obj);
+	if (err) {
+		fprintf(stderr, "Failed to load the resmon BPF object\n");
+		goto destroy_bpf;
+	}
 
-	err = resmon_d_loop(obj);
+	struct ring_buffer *ringbuf =
+		ring_buffer__new(bpf_map__fd(obj->maps.ringbuf),
+				 resmon_d_rb_activity, NULL, NULL);
+	if (ringbuf == NULL)
+		goto destroy_bpf;
 
-	resmon_d_stop_bpf(obj);
+	err = resmon_bpf__attach(obj);
+	if (err) {
+		fprintf(stderr, "Failed to attach BPF program\n");
+		goto free_ringbuf;
+	}
+
+	err = resmon_d_loop(obj, ringbuf);
+
+	resmon_bpf__detach(obj);
+free_ringbuf:
+	ring_buffer__free(ringbuf);
+destroy_bpf:
 	resmon_bpf__destroy(obj);
 	return err;
 }

@@ -9,8 +9,7 @@
 #include <json-c/json_util.h>
 
 #include "resmon.h"
-
-#define ARRAY_SIZE(x) (sizeof(x) / sizeof(*(x)))
+#include "bpf_util.h"
 
 int resmon_jrpc_object_take_add(struct json_object *obj,
 				const char *key,
