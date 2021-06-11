@@ -140,6 +140,15 @@ static int resmon_jrpc_dissect(struct json_object *obj,
 			       size_t policy_size,
 			       char **error)
 {
+	{
+		enum json_type type = json_object_get_type(obj);
+		if (type != json_type_object) {
+			asprintf(error, "Value expected to be an object, but is %s",
+				 json_type_to_name(type));
+			return -1;
+		}
+	}
+
 	for (struct json_object_iterator it = json_object_iter_begin(obj),
 					 et = json_object_iter_end(obj);
 	     !json_object_iter_equal(&it, &et);
@@ -311,6 +320,29 @@ int resmon_jrpc_dissect_error(struct json_object *obj,
 	*code = json_object_get_int64(values[pol_code]);
 	*message = json_object_get_string(values[pol_message]);
 	*data = values[pol_data];
+	return 0;
+}
+
+int resmon_jrpc_dissect_params_emad(struct json_object *obj,
+				    const char **payload,
+				    size_t *payload_len,
+				    char **error)
+{
+	enum {
+		pol_payload,
+	};
+	struct resmon_jrpc_policy policy[] = {
+		[pol_payload] = { .key = "payload", .type = json_type_string,
+				  .required = true },
+	};
+	struct json_object *values[ARRAY_SIZE(policy)] = {};
+	int err = resmon_jrpc_dissect(obj, policy, values, ARRAY_SIZE(policy),
+				      error);
+	if (err)
+		return err;
+
+	*payload = json_object_get_string(values[pol_payload]);
+	*payload_len = json_object_get_string_len(values[pol_payload]);
 	return 0;
 }
 

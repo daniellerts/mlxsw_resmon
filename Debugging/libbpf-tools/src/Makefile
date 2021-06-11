@@ -77,10 +77,6 @@ $(OUTPUT)/%.o: %.c | $(OUTPUT)
 	$(call msg,CC,$@)
 	$(Q)$(CC) $(CFLAGS) $(INCLUDES) -c $(filter %.c,$^) -o $@
 
-$(OUTPUT)/%.o: %.cc | $(OUTPUT)
-	$(call msg,CXX,$@)
-	$(Q)$(CXX) -std=c++20 $(CFLAGS) $(INCLUDES) -c $(filter %.cc,$^) -o $@
-
 $(OUTPUT)/emadlatency.o: emadlatency.h
 $(OUTPUT)/emadlatency.bpf.o: emadlatency.h
 
@@ -95,10 +91,11 @@ emadlatency trapagg: %: $(OUTPUT)/%.o $(LIBBPF_OBJ) $(COMMON_OBJ) | $(OUTPUT) $(
 $(OUTPUT)/resmon.o: INCLUDES += $(shell pkgconf --cflags libnl-3.0 libnl-genl-3.0)
 resmon: CFLAGS += $(shell pkgconf --libs libelf json-c)
 resmon: $(OUTPUT)/resmon.o $(OUTPUT)/resmon-sock.o $(OUTPUT)/resmon-jrpc.o \
-		$(OUTPUT)/resmon-c.o $(OUTPUT)/resmon-d.o $(OUTPUT)/resmon-ht.o \
+		$(OUTPUT)/resmon-c.o $(OUTPUT)/resmon-d.o \
+		$(OUTPUT)/resmon-stat.o $(OUTPUT)/resmon-reg.o \
 		$(LIBBPF_OBJ) $(COMMON_OBJ) | $(OUTPUT) $(OUTPUT)/resmon.bpf.o
 	$(call msg,BINARY,$@)
-	$(Q)$(CXX) $(CFLAGS) -lz $^ -o $@
+	$(Q)$(CC) $(CFLAGS) -lz $^ -o $@
 $(OUTPUT)/resmon-d.o: $(OUTPUT)/resmon.skel.h
 
 emadump: %: $(OUTPUT)/%.o $(LIBBPF_OBJ) $(COMMON_OBJ) | $(OUTPUT)
