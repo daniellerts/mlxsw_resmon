@@ -38,32 +38,6 @@ struct emad_reg_tlv_head {
 	u16 reserved;
 };
 
-struct reg_ralue {
-	u8 __protocol;
-	u8 __op;
-	__be16 resv1;
-
-#define reg_ralue_protocol(reg)	((reg).__protocol & 0x0f)
-#define reg_ralue_op(reg) (((reg).__op & 0x70) >> 4)
-
-	__be16 __virtual_router;
-	__be16 resv2;
-
-#define reg_ralue_virtual_router(reg) (bpf_ntohs((reg).__virtual_router))
-
-	__be16 resv3;
-	u8 resv4;
-	u8 prefix_len;
-
-	union {
-		u8 dip6[16];
-		struct {
-			u8 resv5[12];
-			u8 dip4[4];
-		};
-	};
-};
-
 struct reg_ptar {
 	u8 __op_e;
 	u8 action_set_type;
@@ -168,13 +142,6 @@ static struct emad_tlv_head emad_tlv_decode_header(__be16 type_len_be)
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, 1024 * 1024);
-	__type(key, struct ralue_key);
-	__type(value, struct kvd_allocation);
-} ralue SEC(".maps");
-
-struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 102400/*xxx*/);
 	__type(key, struct ptar_key);
 	__type(value, struct kvd_allocation);
@@ -222,46 +189,6 @@ static void counter_inc(struct kvd_allocation *kvda)
 static void counter_dec(struct kvd_allocation *kvda)
 {
 	return __counter_adj(kvda->counter, (u64)-(s64)kvda->slots);
-}
-
-static int handle_ralue(const u8 *payload)
-{
-	struct reg_ralue reg;
-	bpf_core_read(&reg, sizeof reg, payload);
-
-	struct ralue_key hkey = {};
-	hkey.protocol = reg_ralue_protocol(reg);
-	hkey.prefix_len = reg.prefix_len;
-	hkey.virtual_router = reg_ralue_virtual_router(reg);
-
-	bool ipv6 = hkey.protocol == MLXSW_REG_RALXX_PROTOCOL_IPV6;
-	if (ipv6)
-		__builtin_memcpy(hkey.dip, reg.dip6, sizeof(reg.dip6));
-	else
-		__builtin_memcpy(hkey.dip, reg.dip4, sizeof(reg.dip4));
-
-	enum resmon_counter counter = ipv6 ? RESMON_COUNTER_LPM_IPV6
-					   : RESMON_COUNTER_LPM_IPV4;
-	struct kvd_allocation kvda = {
-		.slots = hkey.prefix_len <= 64 ? 1 : 2,
-		.counter = counter,
-	};
-
-	switch (reg_ralue_op(reg)) {
-		int rc;
-	default:
-		rc = bpf_map_update_elem(&ralue, &hkey, &kvda, BPF_NOEXIST);
-		if (!rc)
-			counter_inc(&kvda);
-		break;
-	case MLXSW_REG_RALUE_OP_WRITE_DELETE:
-		rc = bpf_map_delete_elem(&ralue, &hkey);
-		if (!rc)
-			counter_dec(&kvda);
-		break;
-	}
-
-	return 0;
 }
 
 static int handle_ptar_alloc(struct reg_ptar *reg, struct ptar_key *hkey)
@@ -483,7 +410,7 @@ static int handle_iedr(const u8 *payload)
 
 static int push_to_ringbuf(const u8 *buf, size_t len)
 {
-	/*
+	/* xxx
 #define MLXSW_REG_RALUE_LEN 0x38
 #define MLXSW_REG_PTAR_LEN 0x30
 #define MLXSW_REG_PTCE3_LEN 0xF0
@@ -580,8 +507,6 @@ int BPF_PROG(handle__devlink_hwmsg,
 	buf += sizeof reg_tlv;
 
 	switch (bpf_ntohs(op_tlv.reg_id)) {
-	case 0x8013: /* MLXSW_REG_RALUE_ID */
-		return handle_ralue(buf);
 	case 0x3006: /* MLXSW_REG_PTAR_ID */
 		return handle_ptar(buf);
 	case 0x3027: /* MLXSW_REG_PTCE3_ID */

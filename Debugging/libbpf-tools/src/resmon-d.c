@@ -72,6 +72,20 @@ static void resmon_d_respond_invalid_params(struct resmon_sock *ctl,
 		resmon_jrpc_new_error(NULL, -32602, "Invalid params", data));
 }
 
+static void resmon_d_respond_interr(struct resmon_sock *peer,
+				    struct json_object *id,
+				    const char *data)
+{
+	resmon_jrpc_take_send(peer,
+		resmon_jrpc_new_error(id, -32603, "Internal error", data));
+}
+
+static void resmon_d_respond_memerr(struct resmon_sock *peer,
+				    struct json_object *id)
+{
+	resmon_d_respond_interr(peer, id, "Memory allocation issue");
+}
+
 static void resmon_d_handle_echo(struct resmon_sock *peer,
 				 struct json_object *params_obj,
 				 struct json_object *id)
@@ -89,12 +103,23 @@ static void resmon_d_handle_echo(struct resmon_sock *peer,
 
 put_obj:
 	json_object_put(obj);
+	resmon_d_respond_memerr(peer, id);
 }
 
 static void resmon_d_handle_quit(struct resmon_sock *peer,
 				 struct json_object *params_obj,
 				 struct json_object *id)
 {
+	should_quit = true;
+
+	char *error;
+	int rc = resmon_jrpc_dissect_params_empty(params_obj, &error);
+	if (rc) {
+		resmon_d_respond_invalid_params(peer, error);
+		free(error);
+		return;
+	}
+
 	struct json_object *obj = resmon_jrpc_new_object(id);
 	if (obj == NULL)
 		return;
@@ -104,11 +129,122 @@ static void resmon_d_handle_quit(struct resmon_sock *peer,
 		goto put_obj;
 
 	resmon_jrpc_take_send(peer, obj);
-	should_quit = true;
 	return;
 
 put_obj:
 	json_object_put(obj);
+	resmon_d_respond_memerr(peer, id);
+}
+
+static const char *resmon_d_counter_descriptions[] = {
+	RESMON_COUNTERS(RESMON_COUNTER_EXPAND_AS_DESC)
+};
+
+static int resmon_d_stats_attach_counter(struct json_object *counters_obj,
+					 enum resmon_counter counter,
+					 int64_t value)
+{
+	int rc;
+	struct json_object *counter_obj = json_object_new_object();
+	if (counter_obj == NULL)
+		return -1;
+
+	rc = resmon_jrpc_object_take_add(counter_obj, "id",
+					 json_object_new_int(counter));
+	if (rc)
+		goto put_counter_obj;
+
+	const char *descr = resmon_d_counter_descriptions[counter];
+	rc = resmon_jrpc_object_take_add(counter_obj, "descr",
+					 json_object_new_string(descr));
+
+	if (rc)
+		goto put_counter_obj;
+
+	rc = resmon_jrpc_object_take_add(counter_obj, "value",
+					 json_object_new_int64(value));
+	if (rc)
+		goto put_counter_obj;
+
+	rc = json_object_array_add(counters_obj, counter_obj);
+	if (rc)
+		goto put_counter_obj;
+
+	return 0;
+
+put_counter_obj:
+	json_object_put(counter_obj);
+	return -1;
+}
+
+static void resmon_d_handle_stats(struct resmon_stat *stat,
+				  struct resmon_sock *peer,
+				  struct json_object *params_obj,
+				  struct json_object *id)
+{
+	/* The response is as follows:
+	 *
+	 * {
+	 *     "id": ...,
+	 *     "result": {
+	 *         "counters": [
+	 *             {
+	 *                 "id": counter number as per enum resmon_counter,
+	 *                 "description": string with human-readable descr.,
+	 *                 "value": integer, value of the counter
+	 *             },
+	 *             ....
+	 *         ]
+	 *     }
+	 * }
+	 */
+
+	char *error;
+	int rc = resmon_jrpc_dissect_params_empty(params_obj, &error);
+	if (rc) {
+		resmon_d_respond_invalid_params(peer, error);
+		free(error);
+		return;
+	}
+
+	struct json_object *obj = resmon_jrpc_new_object(id);
+	if (obj == NULL)
+		return;
+
+	struct json_object *result_obj = json_object_new_object();
+	if (result_obj == NULL)
+		goto put_obj;
+
+	struct json_object *counters_obj = json_object_new_array();
+	if (counters_obj == NULL)
+		goto put_result_obj;
+
+	struct resmon_stat_counters counters = resmon_stat_counters(stat);
+	for (int i = 0; i < ARRAY_SIZE(counters.values); i++) {
+		int rc = resmon_d_stats_attach_counter(counters_obj, i,
+						       counters.values[i]);
+		if (rc)
+			goto put_counters_obj;
+	}
+
+	if (resmon_jrpc_object_take_add(result_obj, "counters",
+					counters_obj))
+		goto put_result_obj;
+
+	if (resmon_jrpc_object_take_add(obj, "result",
+					result_obj))
+		goto put_obj;
+
+	resmon_jrpc_take_send(peer, obj);
+	return;
+
+put_counters_obj:
+	json_object_put(counters_obj);
+put_result_obj:
+	json_object_put(result_obj);
+put_obj:
+	json_object_put(obj);
+	resmon_d_respond_memerr(peer, id);
 }
 
 static void resmon_d_handle_emad(struct resmon_stat *stat,
@@ -159,6 +295,7 @@ static void resmon_d_handle_emad(struct resmon_stat *stat,
 
 put_obj:
 	json_object_put(obj);
+	resmon_d_respond_memerr(peer, id);
 }
 
 static void resmon_d_handle_method(struct resmon_stat *stat,
@@ -171,6 +308,8 @@ static void resmon_d_handle_method(struct resmon_stat *stat,
 		return resmon_d_handle_echo(peer, params_obj, id);
 	else if (strcmp(method, "quit") == 0)
 		return resmon_d_handle_quit(peer, params_obj, id);
+	else if (strcmp(method, "stats") == 0)
+		return resmon_d_handle_stats(stat, peer, params_obj, id);
 	else if (strcmp(method, "emad") == 0)
 		return resmon_d_handle_emad(stat, peer, params_obj, id);
 	else
@@ -221,9 +360,10 @@ free_req:
 static int resmon_d_rb_activity(void *ctx, void *data, size_t len)
 {
 	struct resmon_stat *stat = ctx;
-	fprintf(stderr, "process_sample len %zd\n", len);
-	int rc = resmon_reg_process_emad(stat, data, len);
-	if (rc) {
+	fprintf(stderr, "process_sample len %zd\n", len); // xxx
+	enum resmon_reg_process_result res = resmon_reg_process_emad(stat, data,
+								     len);
+	if (res != resmon_reg_process_ok) {
 		// xxx enqueue a message? Or maybe this:
 		//
 		// # resmon -v start &

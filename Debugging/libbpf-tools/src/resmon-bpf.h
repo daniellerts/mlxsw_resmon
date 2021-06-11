@@ -25,13 +25,6 @@ struct kvd_allocation {
 	enum resmon_counter counter;
 };
 
-struct ralue_key {
-	uint8_t protocol;
-	uint8_t prefix_len;
-	uint16_t virtual_router;
-	uint8_t dip[16];
-};
-
 struct ptar_key {
 	uint8_t tcam_region_info[16];
 };

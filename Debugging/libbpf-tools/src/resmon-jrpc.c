@@ -323,6 +323,14 @@ int resmon_jrpc_dissect_error(struct json_object *obj,
 	return 0;
 }
 
+int resmon_jrpc_dissect_params_empty(struct json_object *obj,
+				     char **error)
+{
+	if (obj == NULL)
+		return 0;
+	return resmon_jrpc_dissect(obj, NULL, NULL, 0, error);
+}
+
 int resmon_jrpc_dissect_params_emad(struct json_object *obj,
 				    const char **payload,
 				    size_t *payload_len,

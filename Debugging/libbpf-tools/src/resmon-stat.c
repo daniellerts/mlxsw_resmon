@@ -58,7 +58,7 @@ static int resmon_stat_ralue_eq(const void *k1, const void *k2)
 
 struct resmon_stat
 {
-	int64_t counters[resmon_counter_count];
+	struct resmon_stat_counters counters;
 	struct lh_table *ralue;
 };
 
@@ -101,16 +101,21 @@ void resmon_stat_destroy(struct resmon_stat *stat)
 	free(stat);
 }
 
+struct resmon_stat_counters resmon_stat_counters(struct resmon_stat *stat)
+{
+	return stat->counters;
+}
+
 static void resmon_stat_counter_inc(struct resmon_stat *stat,
 				    struct resmon_stat_kvd_alloc kvda)
 {
-	stat->counters[kvda.counter] += kvda.slots;
+	stat->counters.values[kvda.counter] += kvda.slots;
 }
 
 static void resmon_stat_counter_dec(struct resmon_stat *stat,
 				    struct resmon_stat_kvd_alloc kvda)
 {
-	stat->counters[kvda.counter] -= kvda.slots;
+	stat->counters.values[kvda.counter] -= kvda.slots;
 }
 
 static int resmon_stat_lh_update(struct resmon_stat *stat,

@@ -76,6 +76,8 @@ int resmon_jrpc_dissect_error(struct json_object *obj,
 			      const char **message,
 			      struct json_object **data,
 			      char **error);
+int resmon_jrpc_dissect_params_empty(struct json_object *obj,
+				     char **error);
 int resmon_jrpc_dissect_params_emad(struct json_object *obj,
 				    const char **payload,
 				    size_t *payload_len,
@@ -99,6 +101,10 @@ int resmon_d_start(void);
 
 struct resmon_stat;
 
+struct resmon_stat_counters {
+	int64_t values[resmon_counter_count];
+};
+
 struct resmon_stat_dip {
 	uint8_t dip[16];
 };
@@ -110,6 +116,7 @@ struct resmon_stat_kvd_alloc {
 
 struct resmon_stat *resmon_stat_create(void);
 void resmon_stat_destroy(struct resmon_stat *stat);
+struct resmon_stat_counters resmon_stat_counters(struct resmon_stat *stat);
 
 int resmon_stat_ralue_update(struct resmon_stat *stat,
 			     uint8_t protocol,
