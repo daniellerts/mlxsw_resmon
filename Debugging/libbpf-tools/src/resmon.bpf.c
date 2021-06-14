@@ -128,13 +128,6 @@ struct {
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 102400/*xxx*/);
-	__type(key, struct ptce3_key);
-	__type(value, struct kvd_allocation);
-} ptce3 SEC(".maps");
-
-struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, 102400/*xxx*/);
 	__type(key, struct kvdl_key);
 	__type(value, struct kvd_allocation);
 } kvdl SEC(".maps");
@@ -167,64 +160,6 @@ static void counter_inc(struct kvd_allocation *kvda)
 static void counter_dec(struct kvd_allocation *kvda)
 {
 	return __counter_adj(kvda->counter, (u64)-(s64)kvda->slots);
-}
-
-static int handle_ptce3_alloc(const struct ptce3_key *hkey)
-{
-	struct ptar_key ptar_key;
-	__builtin_memcpy(ptar_key.tcam_region_info, hkey->tcam_region_info,
-			 sizeof ptar_key.tcam_region_info);
-
-	struct kvd_allocation *kvda = bpf_map_lookup_elem(&ptar, &ptar_key);
-	if (!kvda)
-		return 0;
-
-	int rc = bpf_map_update_elem(&ptce3, hkey, kvda, BPF_NOEXIST);
-	if (!rc)
-		counter_inc(kvda);
-
-	return 0;
-}
-
-static int handle_ptce3_free(const struct ptce3_key *hkey)
-{
-	struct kvd_allocation *kvda = bpf_map_lookup_elem(&ptce3, hkey);
-	if (!kvda)
-		return 0;
-
-	bpf_map_delete_elem(&ptce3, hkey);
-	counter_dec(kvda);
-	return 0;
-}
-
-static int handle_ptce3(const u8 *payload)
-{
-	struct reg_ptce3 reg;
-	bpf_core_read(&reg, sizeof reg, payload);
-
-	switch (reg_ptce3_op(reg)) {
-	case MLXSW_REG_PTCE3_OP_WRITE_WRITE:
-	case MLXSW_REG_PTCE3_OP_WRITE_UPDATE:
-		break;
-	default:
-		return 0;
-	}
-
-	struct ptce3_key hkey = {
-		.erp_id = reg_ptce3_erp_id(reg),
-		.delta_start = reg_ptce3_delta_start(reg),
-		.delta_mask = reg.delta_mask,
-		.delta_value = reg.delta_value,
-	};
-	__builtin_memcpy(hkey.tcam_region_info, reg.tcam_region_info,
-			 sizeof reg.tcam_region_info);
-	__builtin_memcpy(hkey.flex2_key_blocks, reg.flex2_key_blocks,
-			 sizeof reg.flex2_key_blocks);
-
-	if (reg_ptce3_v(reg))
-		return handle_ptce3_alloc(&hkey);
-	else
-		return handle_ptce3_free(&hkey);
 }
 
 static int handle_kvdl_alloc(struct kvdl_key *hkey, struct kvd_allocation *kvda)
@@ -428,8 +363,6 @@ int BPF_PROG(handle__devlink_hwmsg,
 	buf += sizeof reg_tlv;
 
 	switch (bpf_ntohs(op_tlv.reg_id)) {
-	case 0x3027: /* MLXSW_REG_PTCE3_ID */
-		return handle_ptce3(buf);
 	case 0x300F: /* MLXSW_REG_PEFA_ID */
 		return handle_pefa(buf);
 	case 0x3804: /* MLXSW_REG_IEDR_ID */

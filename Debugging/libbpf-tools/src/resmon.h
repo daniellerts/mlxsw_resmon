@@ -119,6 +119,10 @@ struct resmon_stat_tcam_region_info {
 	uint8_t tcam_region_info[16];
 };
 
+struct resmon_stat_flex2_key_blocks {
+	uint8_t flex2_key_blocks[96];
+};
+
 struct resmon_stat_kvd_alloc {
 	unsigned int slots;
 	enum resmon_counter counter;
@@ -148,6 +152,22 @@ int resmon_stat_ptar_free(struct resmon_stat *stat,
 int resmon_stat_ptar_get(struct resmon_stat *stat,
 			 struct resmon_stat_tcam_region_info region_info,
 			 struct resmon_stat_kvd_alloc *ret_kvd_alloc);
+
+int resmon_stat_ptce3_alloc(struct resmon_stat *stat,
+			struct resmon_stat_tcam_region_info tcam_region_info,
+			const struct resmon_stat_flex2_key_blocks *key_blocks,
+			uint8_t delta_mask,
+			uint8_t delta_value,
+			uint16_t delta_start,
+			uint8_t erp_id,
+			struct resmon_stat_kvd_alloc kvd_alloc);
+int resmon_stat_ptce3_free(struct resmon_stat *stat,
+		       struct resmon_stat_tcam_region_info tcam_region_info,
+		       const struct resmon_stat_flex2_key_blocks *key_blocks,
+		       uint8_t delta_mask,
+		       uint8_t delta_value,
+		       uint16_t delta_start,
+		       uint8_t erp_id);
 
 /* resmon-reg.c */
 

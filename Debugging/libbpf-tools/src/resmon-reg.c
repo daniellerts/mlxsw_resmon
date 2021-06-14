@@ -98,6 +98,19 @@ enum mlxsw_reg_ptar_key_type {
 	MLXSW_REG_PTAR_KEY_TYPE_FLEX2 = 0x51, /* Spectrum-2 */
 };
 
+enum mlxsw_reg_ptce3_op {
+	/* Write operation. Used to write a new entry to the table.
+	 * All R/W fields are relevant for new entry. Activity bit is set
+	 * for new entries. Write with v = 0 will delete the entry. Must
+	 * not be used if an entry exists.
+	 */
+	 MLXSW_REG_PTCE3_OP_WRITE_WRITE = 0,
+	 /* Update operation */
+	 MLXSW_REG_PTCE3_OP_WRITE_UPDATE = 1,
+	 /* Read operation */
+	 MLXSW_REG_PTCE3_OP_QUERY_READ = 0,
+};
+
 struct resmon_reg_ralue {
 	uint8_t __protocol;
 	uint8_t __op;
@@ -330,14 +343,71 @@ resmon_reg_handle_ptar(struct resmon_stat *stat, const uint8_t *payload,
 	case MLXSW_REG_PTAR_OP_ALLOC:
 		kvd_alloc = resmon_reg_ptar_get_kvd_alloc(reg);
 		rc = resmon_stat_ptar_alloc(stat, tcam_region_info, kvd_alloc);
+		if (rc != 0)
+			return resmon_reg_process_insert_failed;
 		break;
 	case MLXSW_REG_PTAR_OP_FREE:
 		rc = resmon_stat_ptar_free(stat, tcam_region_info);
+		if (rc != 0)
+			return resmon_reg_process_delete_failed;
 		break;
 	}
 
-	return rc ? resmon_reg_process_insert_failed
-		  : resmon_reg_process_ok;
+	return resmon_reg_process_ok;
+
+oob:
+	return resmon_reg_process_truncated_payload;
+}
+
+static enum resmon_reg_process_result
+resmon_reg_handle_ptce3(struct resmon_stat *stat, const uint8_t *payload,
+			size_t payload_len)
+{
+	int rc;
+	const struct resmon_reg_ptce3 *reg =
+		RESMON_REG_READ(sizeof *reg, payload, payload_len);
+
+	switch (resmon_reg_ptce3_op(reg)) {
+	case MLXSW_REG_PTCE3_OP_WRITE_WRITE:
+	case MLXSW_REG_PTCE3_OP_WRITE_UPDATE:
+		break;
+	default:
+		return resmon_reg_process_ok;
+	}
+
+	struct resmon_stat_tcam_region_info tcam_region_info;
+	memcpy(tcam_region_info.tcam_region_info, reg->tcam_region_info,
+	       sizeof tcam_region_info.tcam_region_info);
+
+	struct resmon_stat_flex2_key_blocks key_blocks;
+	memcpy(key_blocks.flex2_key_blocks, reg->flex2_key_blocks,
+	       sizeof key_blocks.flex2_key_blocks);
+
+	if (resmon_reg_ptce3_v(reg)) {
+		struct resmon_stat_kvd_alloc kvd_alloc;
+		rc = resmon_stat_ptar_get(stat, tcam_region_info, &kvd_alloc);
+		if (rc != 0)
+			return resmon_reg_process_insert_failed;
+
+		rc = resmon_stat_ptce3_alloc(stat, tcam_region_info,
+					     &key_blocks, reg->delta_mask,
+					     reg->delta_value,
+					     resmon_reg_ptce3_delta_start(reg),
+					     resmon_reg_ptce3_erp_id(reg),
+					     kvd_alloc);
+		if (rc != 0)
+			return resmon_reg_process_insert_failed;
+	} else {
+		rc = resmon_stat_ptce3_free(stat, tcam_region_info,
+					    &key_blocks, reg->delta_mask,
+					    reg->delta_value,
+					    resmon_reg_ptce3_delta_start(reg),
+					    resmon_reg_ptce3_erp_id(reg));
+		if (rc != 0)
+			return resmon_reg_process_delete_failed;
+	}
+
+	return resmon_reg_process_ok;
 
 oob:
 	return resmon_reg_process_truncated_payload;
@@ -376,9 +446,9 @@ enum resmon_reg_process_result resmon_reg_process_emad(struct resmon_stat *stat,
 		return resmon_reg_handle_ralue(stat, buf, len);
 	case 0x3006: /* MLXSW_REG_PTAR_ID */
 		return resmon_reg_handle_ptar(stat, buf, len);
-#if 0
 	case 0x3027: /* MLXSW_REG_PTCE3_ID */
-		return handle_ptce3(buf);
+		return resmon_reg_handle_ptce3(stat, buf, len);
+#if 0
 	case 0x300F: /* MLXSW_REG_PEFA_ID */
 		return handle_pefa(buf);
 	case 0x3804: /* MLXSW_REG_IEDR_ID */
