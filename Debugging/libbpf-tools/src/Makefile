@@ -95,8 +95,7 @@ emadlatency trapagg: %: $(OUTPUT)/%.o $(LIBBPF_OBJ) $(COMMON_OBJ) | $(OUTPUT) $(
 	$(call msg,BINARY,$@)
 	$(Q)$(CC) $(CFLAGS) $^ -lelf -lz -o $@
 
-$(OUTPUT)/resmon.o: INCLUDES += $(shell pkgconf --cflags libnl-3.0 libnl-genl-3.0)
-resmon: CFLAGS += $(shell pkgconf --libs libelf json-c)
+resmon: CFLAGS += $(shell pkgconf --libs libelf libnl-3.0 libnl-genl-3.0 json-c)
 resmon:		$(OUTPUT)/resmon.o \
 		$(OUTPUT)/resmon-back.o \
 		$(OUTPUT)/resmon-c.o \
@@ -105,9 +104,12 @@ resmon:		$(OUTPUT)/resmon.o \
 		$(OUTPUT)/resmon-reg.o \
 		$(OUTPUT)/resmon-sock.o \
 		$(OUTPUT)/resmon-stat.o \
+		$(OUTPUT)/resmon-dl.o \
 		$(LIBBPF_OBJ) $(COMMON_OBJ) | $(OUTPUT) $(OUTPUT)/resmon.bpf.o
 	$(call msg,BINARY,$@)
 	$(Q)$(CC) $(CFLAGS) -lz $^ -o $@
+$(OUTPUT)/resmon-dl.o: INCLUDES += $(shell pkgconf --cflags libnl-3.0 libnl-genl-3.0)
+$(OUTPUT)/resmon-dl.o: $(OUTPUT)/resmon.skel.h
 $(OUTPUT)/resmon-d.o: $(OUTPUT)/resmon.skel.h
 
 emadump: %: $(OUTPUT)/%.o $(LIBBPF_OBJ) $(COMMON_OBJ) | $(OUTPUT)
