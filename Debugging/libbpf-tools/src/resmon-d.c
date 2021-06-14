@@ -77,6 +77,15 @@ void resmon_d_respond_memerr(struct resmon_sock *peer, struct json_object *id)
 	resmon_d_respond_interr(peer, id, "Memory allocation issue");
 }
 
+static void resmon_d_respond_deverr(struct resmon_sock *peer,
+				    struct json_object *id,
+				    const char *data)
+{
+	resmon_jrpc_take_send(peer,
+		resmon_jrpc_new_error(id, resmon_jrpc_e_devlink,
+				      "Devlink issue", data));
+}
+
 static void resmon_d_handle_echo(struct resmon_sock *peer,
 				 struct json_object *params_obj,
 				 struct json_object *id)
@@ -133,9 +142,10 @@ static const char *const resmon_d_counter_descriptions[] = {
 
 static int resmon_d_stats_attach_counter(struct json_object *counters_obj,
 					 enum resmon_counter counter,
-					 int64_t value)
+					 int64_t value, uint64_t kvd_size)
 {
 	int rc;
+
 	struct json_object *counter_obj = json_object_new_object();
 	if (counter_obj == NULL)
 		return -1;
@@ -154,6 +164,11 @@ static int resmon_d_stats_attach_counter(struct json_object *counters_obj,
 
 	rc = resmon_jrpc_object_take_add(counter_obj, "value",
 					 json_object_new_int64(value));
+	if (rc)
+		goto put_counter_obj;
+
+	rc = resmon_jrpc_object_take_add(counter_obj, "capacity",
+					 json_object_new_uint64(kvd_size));
 	if (rc)
 		goto put_counter_obj;
 
@@ -190,10 +205,20 @@ static void resmon_d_handle_stats(struct resmon_stat *stat,
 	 * }
 	 */
 
+	uint64_t kvd_size = 0;
 	char *error;
-	int rc = resmon_jrpc_dissect_params_empty(params_obj, &error);
+	int rc;
+
+	rc = resmon_jrpc_dissect_params_empty(params_obj, &error);
 	if (rc) {
 		resmon_d_respond_invalid_params(peer, error);
+		free(error);
+		return;
+	}
+
+	rc = resmon_dl_get_kvd_size(&kvd_size, &error);
+	if (rc) {
+		resmon_d_respond_deverr(peer, id, error);
 		free(error);
 		return;
 	}
@@ -213,7 +238,8 @@ static void resmon_d_handle_stats(struct resmon_stat *stat,
 	struct resmon_stat_counters counters = resmon_stat_counters(stat);
 	for (int i = 0; i < ARRAY_SIZE(counters.values); i++) {
 		int rc = resmon_d_stats_attach_counter(counters_obj, i,
-						       counters.values[i]);
+						       counters.values[i],
+						       kvd_size);
 		if (rc)
 			goto put_counters_obj;
 	}

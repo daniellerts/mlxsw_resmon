@@ -69,6 +69,10 @@ int resmon_sock_recv(struct resmon_sock *sock,
 
 /* resmon-jrpc.c */
 
+enum resmon_jrpc_e {
+	    resmon_jrpc_e_devlink = -1,
+};
+
 struct json_object *resmon_jrpc_new_object(struct json_object *id);
 struct json_object *resmon_jrpc_new_request(int id, const char *method);
 struct json_object *resmon_jrpc_new_error(struct json_object *id,
@@ -118,6 +122,9 @@ int resmon_c_ping(void);
 int resmon_c_stop(void);
 int resmon_c_emad(int argc, char **argv);
 int resmon_c_stats(void);
+
+/* resmon-dl.c */
+int resmon_dl_get_kvd_size(uint64_t *size, char **error);
 
 /* resmon-stat.c */
 
