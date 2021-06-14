@@ -480,7 +480,6 @@ static int resmon_d_loop(struct resmon_stat *stat, struct ring_buffer *ringbuf)
 				goto out;
 			}
 			if (pollfd->revents & POLLIN) {
-				fprintf(stderr, "Activity on pollfd %zd\n", i);
 				switch (i) {
 				case pollfd_ctl:
 					err = resmon_d_ctl_activity(stat, &ctl);
