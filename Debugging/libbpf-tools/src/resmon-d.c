@@ -347,7 +347,6 @@ out:
 
 free_dec_payload:
 	free(dec_payload);
-put_obj:
 	json_object_put(obj);
 respond_memerr:
 	resmon_d_respond_memerr(peer, id);

@@ -38,28 +38,6 @@ struct emad_reg_tlv_head {
 	u16 reserved;
 };
 
-struct reg_ptar {
-	u8 __op_e;
-	u8 action_set_type;
-	u8 resv1;
-	u8 key_type;
-
-#define reg_ptar_op(reg) ((reg).__op_e >> 4)
-
-	__be16 resv2;
-	__be16 __region_size;
-
-	__be16 resv3;
-	__be16 __region_id;
-
-	__be16 resv4;
-	u8 __dup_opt;
-	u8 __packet_rate;
-
-	u8 tcam_region_info[16];
-	u8 flexible_keys[16];
-};
-
 struct reg_ptce3 {
 	u8 __v_a;
 	u8 __op;
@@ -189,63 +167,6 @@ static void counter_inc(struct kvd_allocation *kvda)
 static void counter_dec(struct kvd_allocation *kvda)
 {
 	return __counter_adj(kvda->counter, (u64)-(s64)kvda->slots);
-}
-
-static int handle_ptar_alloc(struct reg_ptar *reg, struct ptar_key *hkey)
-{
-	/* This needs to be volatile to prevent some odd interaction
-	 * between the compiler and verifier. The latter rejects the
-	 * program otherwise. */
-	volatile unsigned int nkeys = 0;
-	for (unsigned int i = 0; i < sizeof reg->flexible_keys; i++)
-		if (reg->flexible_keys[i])
-			nkeys++;
-
-	struct kvd_allocation kvda = {
-		.slots = nkeys >= 12 ? 4 :
-			 nkeys >= 4  ? 2 : 1,
-		.counter = RESMON_COUNTER_ATCAM,
-	};
-
-	bpf_map_update_elem(&ptar, hkey, &kvda, BPF_NOEXIST);
-	return 0;
-}
-
-static int handle_ptar_free(struct ptar_key *hkey)
-{
-	bpf_map_delete_elem(&ptar, hkey);
-	return 0;
-}
-
-static int handle_ptar(const u8 *payload)
-{
-	struct reg_ptar reg;
-	bpf_core_read(&reg, sizeof reg, payload);
-
-	switch (reg.key_type) {
-	case MLXSW_REG_PTAR_KEY_TYPE_FLEX:
-	case MLXSW_REG_PTAR_KEY_TYPE_FLEX2:
-		break;
-	default:
-		return 0;
-	}
-
-	struct ptar_key hkey;
-	__builtin_memcpy(hkey.tcam_region_info, reg.tcam_region_info,
-			 sizeof reg.tcam_region_info);
-
-	switch (reg_ptar_op(reg)) {
-		int rc;
-	case MLXSW_REG_PTAR_OP_RESIZE:
-	case MLXSW_REG_PTAR_OP_TEST:
-		return 0;
-	case MLXSW_REG_PTAR_OP_ALLOC:
-		return handle_ptar_alloc(&reg, &hkey);
-	case MLXSW_REG_PTAR_OP_FREE:
-		return handle_ptar_free(&hkey);
-	}
-
-	return 0;
 }
 
 static int handle_ptce3_alloc(const struct ptce3_key *hkey)
@@ -507,8 +428,6 @@ int BPF_PROG(handle__devlink_hwmsg,
 	buf += sizeof reg_tlv;
 
 	switch (bpf_ntohs(op_tlv.reg_id)) {
-	case 0x3006: /* MLXSW_REG_PTAR_ID */
-		return handle_ptar(buf);
 	case 0x3027: /* MLXSW_REG_PTCE3_ID */
 		return handle_ptce3(buf);
 	case 0x300F: /* MLXSW_REG_PEFA_ID */

@@ -115,6 +115,10 @@ struct resmon_stat_dip {
 	uint8_t dip[16];
 };
 
+struct resmon_stat_tcam_region_info {
+	uint8_t tcam_region_info[16];
+};
+
 struct resmon_stat_kvd_alloc {
 	unsigned int slots;
 	enum resmon_counter counter;
@@ -135,6 +139,15 @@ int resmon_stat_ralue_delete(struct resmon_stat *stat,
 			     uint8_t prefix_len,
 			     uint16_t virtual_router,
 			     struct resmon_stat_dip dip);
+
+int resmon_stat_ptar_alloc(struct resmon_stat *stat,
+			   struct resmon_stat_tcam_region_info region_info,
+			   struct resmon_stat_kvd_alloc kvda);
+int resmon_stat_ptar_free(struct resmon_stat *stat,
+			  struct resmon_stat_tcam_region_info region_info);
+int resmon_stat_ptar_get(struct resmon_stat *stat,
+			 struct resmon_stat_tcam_region_info region_info,
+			 struct resmon_stat_kvd_alloc *ret_kvd_alloc);
 
 /* resmon-reg.c */
 

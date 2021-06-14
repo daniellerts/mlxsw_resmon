@@ -82,6 +82,22 @@ enum mlxsw_reg_ralue_op {
 	MLXSW_REG_RALUE_OP_WRITE_DELETE = 3,
 };
 
+enum mlxsw_reg_ptar_op {
+	/* allocate a TCAM region */
+	MLXSW_REG_PTAR_OP_ALLOC,
+	/* resize a TCAM region */
+	MLXSW_REG_PTAR_OP_RESIZE,
+	/* deallocate TCAM region */
+	MLXSW_REG_PTAR_OP_FREE,
+	/* test allocation */
+	MLXSW_REG_PTAR_OP_TEST,
+};
+
+enum mlxsw_reg_ptar_key_type {
+	MLXSW_REG_PTAR_KEY_TYPE_FLEX = 0x50, /* Spetrum */
+	MLXSW_REG_PTAR_KEY_TYPE_FLEX2 = 0x51, /* Spectrum-2 */
+};
+
 struct resmon_reg_ralue {
 	uint8_t __protocol;
 	uint8_t __op;
@@ -270,6 +286,63 @@ oob:
 	return resmon_reg_process_truncated_payload;
 }
 
+static struct resmon_stat_kvd_alloc
+resmon_reg_ptar_get_kvd_alloc(const struct resmon_reg_ptar *reg)
+{
+	size_t nkeys = 0;
+	for (size_t i = 0; i < sizeof reg->flexible_keys; i++)
+		if (reg->flexible_keys[i])
+			nkeys++;
+
+	return (struct resmon_stat_kvd_alloc) {
+		.slots = nkeys >= 12 ? 4 :
+			 nkeys >= 4  ? 2 : 1,
+		.counter = RESMON_COUNTER_ATCAM,
+	};
+}
+
+static enum resmon_reg_process_result
+resmon_reg_handle_ptar(struct resmon_stat *stat, const uint8_t *payload,
+		       size_t payload_len)
+{
+	const struct resmon_reg_ptar *reg =
+		RESMON_REG_READ(sizeof *reg, payload, payload_len);
+
+	switch (reg->key_type) {
+	case MLXSW_REG_PTAR_KEY_TYPE_FLEX:
+	case MLXSW_REG_PTAR_KEY_TYPE_FLEX2:
+		break;
+	default:
+		return resmon_reg_process_ok;
+	}
+
+	struct resmon_stat_tcam_region_info tcam_region_info;
+	memcpy(tcam_region_info.tcam_region_info, reg->tcam_region_info,
+	       sizeof tcam_region_info.tcam_region_info);
+
+	int rc;
+	switch (resmon_reg_ptar_op(reg)) {
+		struct resmon_stat_kvd_alloc kvd_alloc;
+	case MLXSW_REG_PTAR_OP_RESIZE:
+	case MLXSW_REG_PTAR_OP_TEST:
+	default:
+		return resmon_reg_process_ok;
+	case MLXSW_REG_PTAR_OP_ALLOC:
+		kvd_alloc = resmon_reg_ptar_get_kvd_alloc(reg);
+		rc = resmon_stat_ptar_alloc(stat, tcam_region_info, kvd_alloc);
+		break;
+	case MLXSW_REG_PTAR_OP_FREE:
+		rc = resmon_stat_ptar_free(stat, tcam_region_info);
+		break;
+	}
+
+	return rc ? resmon_reg_process_insert_failed
+		  : resmon_reg_process_ok;
+
+oob:
+	return resmon_reg_process_truncated_payload;
+}
+
 enum resmon_reg_process_result resmon_reg_process_emad(struct resmon_stat *stat,
 						       const uint8_t *buf,
 						       size_t len)
@@ -301,9 +374,9 @@ enum resmon_reg_process_result resmon_reg_process_emad(struct resmon_stat *stat,
 	switch (uint16_be_toh(op_tlv->reg_id)) {
 	case 0x8013: /* MLXSW_REG_RALUE_ID */
 		return resmon_reg_handle_ralue(stat, buf, len);
-#if 0
 	case 0x3006: /* MLXSW_REG_PTAR_ID */
-		return handle_ptar(buf);
+		return resmon_reg_handle_ptar(stat, buf, len);
+#if 0
 	case 0x3027: /* MLXSW_REG_PTCE3_ID */
 		return handle_ptce3(buf);
 	case 0x300F: /* MLXSW_REG_PEFA_ID */
