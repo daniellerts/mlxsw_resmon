@@ -27,6 +27,11 @@ enum resmon_counter {
 
 enum { resmon_counter_count = 0 RESMON_COUNTERS(EXPAND_AS_PLUS1) };
 
+#define NEXT_ARG() do { argv++; if (--argc <= 0) goto incomplete_command; } while(0)
+#define NEXT_ARG_OK() (argc - 1 > 0)
+#define NEXT_ARG_FWD() do { argv++; argc--; } while(0)
+#define PREV_ARG() do { argv--; argc++; } while(0)
+
 /* resmon.c */
 
 extern struct resmon_env {
@@ -92,6 +97,7 @@ int resmon_jrpc_take_send(struct resmon_sock *sock, struct json_object *obj);
 
 int resmon_c_ping(void);
 int resmon_c_stop(void);
+int resmon_c_emad(int argc, char **argv);
 
 /* resmon-d.c */
 

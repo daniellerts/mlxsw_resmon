@@ -58,6 +58,11 @@ static int resmon_cmd_ping(int argc, char **argv)
 	return resmon_common_args_only(argc, argv, resmon_c_ping);
 }
 
+static int resmon_cmd_emad(int argc, char **argv)
+{
+	return resmon_c_emad(argc, argv);
+}
+
 static int resmon_cmd(int argc, char **argv)
 {
 	if (!argc || strcmp(*argv, "help") == 0)
@@ -68,6 +73,8 @@ static int resmon_cmd(int argc, char **argv)
 		return resmon_cmd_stop(argc - 1, argv + 1);
 	else if (strcmp(*argv, "ping") == 0)
 		return resmon_cmd_ping(argc - 1, argv + 1);
+	else if (strcmp(*argv, "emad") == 0)
+		return resmon_cmd_emad(argc - 1, argv + 1);
 
 	fprintf(stderr, "Unknown command \"%s\"\n", *argv);
 	return -EINVAL;
