@@ -214,12 +214,29 @@ resmon_reg_emad_decode_tl(uint16_be_t type_len_be)
 	};
 }
 
+#define RESMON_REG_PULL(size, payload, payload_len)			\
+	({								\
+		if (payload_len < size)					\
+			goto oob;					\
+		__typeof(payload) __ret = payload;			\
+		payload += size;					\
+		payload_len -= size;					\
+		(const void *) __ret;					\
+	})
+
+#define RESMON_REG_READ(size, payload, payload_len)			\
+	({								\
+		__typeof(payload) __payload = payload;			\
+		__typeof(payload_len) __payload_len = payload_len;	\
+		RESMON_REG_PULL(size, __payload, __payload_len);	\
+	})
+
 static enum resmon_reg_process_result
 resmon_reg_handle_ralue(struct resmon_stat *stat, const uint8_t *payload,
 			size_t payload_len)
 {
-	// xxx handle length
-	struct resmon_reg_ralue *reg = (struct resmon_reg_ralue *) payload;
+	const struct resmon_reg_ralue *reg =
+		RESMON_REG_READ(sizeof *reg, payload, payload_len);
 
 	uint8_t protocol = resmon_reg_ralue_protocol(reg);
 	uint8_t prefix_len = reg->prefix_len;
@@ -248,6 +265,9 @@ resmon_reg_handle_ralue(struct resmon_stat *stat, const uint8_t *payload,
 					  virtual_router, dip, kvda);
 	return rc ? resmon_reg_process_insert_failed
 		  : resmon_reg_process_ok;
+
+oob:
+	return resmon_reg_process_truncated_payload;
 }
 
 enum resmon_reg_process_result resmon_reg_process_emad(struct resmon_stat *stat,
@@ -255,19 +275,20 @@ enum resmon_reg_process_result resmon_reg_process_emad(struct resmon_stat *stat,
 						       size_t len)
 {
 	struct resmon_reg_emad_tl tl;
-	// xxx handle len
 
-	const struct resmon_reg_op_tlv *op_tlv = (void *) buf;
+	const struct resmon_reg_op_tlv *op_tlv =
+		RESMON_REG_READ(sizeof *op_tlv, buf, len);
 	tl = resmon_reg_emad_decode_tl(op_tlv->type_len);
 
-	buf += tl.length * 4;
-	const struct resmon_reg_reg_tlv_head *reg_tlv = (void *) buf;
+	RESMON_REG_PULL(tl.length * 4, buf, len);
+	const struct resmon_reg_reg_tlv_head *reg_tlv =
+		RESMON_REG_READ(sizeof *reg_tlv, buf, len);
 	tl = resmon_reg_emad_decode_tl(reg_tlv->type_len);
 
 	/* Skip over the TLV if it is in fact a STRING TLV. */
 	if (tl.type == MLXSW_EMAD_TLV_TYPE_STRING) {
-		buf += tl.length * 4;
-		reg_tlv = (void *) buf;
+		RESMON_REG_PULL(tl.length * 4, buf, len);
+		reg_tlv = RESMON_REG_READ(sizeof *reg_tlv, buf, len);
 		tl = resmon_reg_emad_decode_tl(reg_tlv->type_len);
 	}
 
@@ -275,7 +296,7 @@ enum resmon_reg_process_result resmon_reg_process_emad(struct resmon_stat *stat,
 		return resmon_reg_process_no_register;
 
 	/* Get to the register payload. */
-	buf += sizeof *reg_tlv;
+	RESMON_REG_PULL(sizeof *reg_tlv, buf, len);
 
 	switch (uint16_be_toh(op_tlv->reg_id)) {
 	case 0x8013: /* MLXSW_REG_RALUE_ID */
@@ -293,4 +314,7 @@ enum resmon_reg_process_result resmon_reg_process_emad(struct resmon_stat *stat,
 	}
 
 	return resmon_reg_process_unknown_register;
+
+oob:
+	return resmon_reg_process_truncated_payload;
 }

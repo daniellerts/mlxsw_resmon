@@ -313,11 +313,20 @@ static void resmon_d_handle_emad(struct resmon_stat *stat,
 				       "EMAD processing error",
 				       "Insert failed");
 		goto out;
+	case resmon_reg_process_truncated_payload:
+		resmon_d_respond_error(peer, id, res,
+				       "EMAD processing error",
+				       "EMAD malformed: Payload truncated");
+		goto out;
 	case resmon_reg_process_no_register:
+		resmon_d_respond_error(peer, id, res,
+				       "EMAD processing error",
+				       "EMAD malformed: No register");
+		goto out;
 	case resmon_reg_process_unknown_register:
 		resmon_d_respond_error(peer, id, res,
 				       "EMAD processing error",
-				       "EMAD malformed");
+				       "EMAD malformed: Unknown register");
 		goto out;
 	case resmon_reg_process_ok:
 		break;

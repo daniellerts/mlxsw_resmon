@@ -134,6 +134,7 @@ int resmon_stat_ralue_delete(struct resmon_stat *stat,
 
 enum resmon_reg_process_result {
 	resmon_reg_process_ok,
+	resmon_reg_process_truncated_payload,
 	resmon_reg_process_no_register,
 	resmon_reg_process_unknown_register,
 	resmon_reg_process_insert_failed,
