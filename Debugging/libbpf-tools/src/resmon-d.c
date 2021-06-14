@@ -247,38 +247,78 @@ put_obj:
 	resmon_d_respond_memerr(peer, id);
 }
 
+static int resmon_d_emad_decode_payload(uint8_t *dec, const char *enc,
+					size_t dec_len)
+{
+	for (size_t i = 0; i < dec_len; i++) {
+		char buf[3] = {enc[2 * i], enc[2 * i + 1], '\0'};
+		char *endptr = NULL;
+		errno = 0;
+		long int byte = strtol(buf, &endptr, 16);
+		if (errno || *endptr != '\0')
+			return -1;
+		dec[i] = byte;
+	}
+	return 0;
+}
+
 static void resmon_d_handle_emad(struct resmon_stat *stat,
 				 struct resmon_sock *peer,
 				 struct json_object *params_obj,
 				 struct json_object *id)
 {
+	int rc;
+
 	const char *payload;
 	size_t payload_len;
 	char *error;
-	int rc = resmon_jrpc_dissect_params_emad(params_obj, &payload,
-						 &payload_len, &error);
-	if (rc) {
+	rc = resmon_jrpc_dissect_params_emad(params_obj, &payload,
+					     &payload_len, &error);
+	if (rc != 0) {
 		resmon_d_respond_invalid_params(peer, error);
 		free(error);
 		return;
 	}
 
+	if (payload_len % 2 != 0) {
+		resmon_d_respond_invalid_params(peer,
+				    "EMAD payload has an odd length");
+		return;
+	}
+
+	size_t dec_payload_len = payload_len / 2;
+	uint8_t *dec_payload = malloc(dec_payload_len);
+	if (dec_payload == NULL)
+		goto respond_memerr;
+
+	rc = resmon_d_emad_decode_payload(dec_payload, payload,
+					  dec_payload_len);
+	if (rc != 0) {
+		resmon_d_respond_invalid_params(peer,
+				    "EMAD payload expected in hexdump format");
+		goto out;
+	}
+
+
 	enum resmon_reg_process_result res =
-		resmon_reg_process_emad(stat, (void *) payload, payload_len);
+		resmon_reg_process_emad(stat, dec_payload, dec_payload_len);
 	switch (res) {
 	case resmon_reg_process_delete_failed:
-		return resmon_d_respond_error(peer, id, res,
-					      "EMAD processing error",
-					      "Delete failed");
+		resmon_d_respond_error(peer, id, res,
+				       "EMAD processing error",
+				       "Delete failed");
+		goto out;
 	case resmon_reg_process_insert_failed:
-		return resmon_d_respond_error(peer, id, res,
-					      "EMAD processing error",
-					      "Insert failed");
+		resmon_d_respond_error(peer, id, res,
+				       "EMAD processing error",
+				       "Insert failed");
+		goto out;
 	case resmon_reg_process_no_register:
 	case resmon_reg_process_unknown_register:
-		return resmon_d_respond_error(peer, id, res,
-					      "EMAD processing error",
-					      "EMAD malformed");
+		resmon_d_respond_error(peer, id, res,
+				       "EMAD processing error",
+				       "EMAD malformed");
+		goto out;
 	case resmon_reg_process_ok:
 		break;
 	default:
@@ -291,10 +331,14 @@ static void resmon_d_handle_emad(struct resmon_stat *stat,
 	if (resmon_jrpc_object_take_add(obj, "result", NULL))
 		goto put_obj;
 	resmon_jrpc_take_send(peer, obj);
+
+out:
+	free(dec_payload);
 	return;
 
 put_obj:
 	json_object_put(obj);
+respond_memerr:
 	resmon_d_respond_memerr(peer, id);
 }
 
