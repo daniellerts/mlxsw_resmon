@@ -444,12 +444,17 @@ static int resmon_d_loop(struct resmon_stat *stat, struct ring_buffer *ringbuf)
 	if (env.verbosity > 0)
 		fprintf(stderr, "Listening on %s\n", ctl.sa.sun_path);
 
+	enum {
+		pollfd_ctl,
+		pollfd_rb,
+	};
+
 	struct pollfd pollfds[] = {
-		{
+		[pollfd_ctl] = {
 			.fd = ctl.fd,
 			.events = POLLIN,
 		},
-		{
+		[pollfd_rb] = {
 			.fd = ring_buffer__epoll_fd(ringbuf),
 			.events = POLLIN,
 		},
@@ -476,15 +481,17 @@ static int resmon_d_loop(struct resmon_stat *stat, struct ring_buffer *ringbuf)
 			}
 			if (pollfd->revents & POLLIN) {
 				fprintf(stderr, "Activity on pollfd %zd\n", i);
-				if (i == 0) { // xxx
+				switch (i) {
+				case pollfd_ctl:
 					err = resmon_d_ctl_activity(stat, &ctl);
 					if (err)
 						goto out;
-				}
-				if (i == 1) { // xxx
+					break;
+				case pollfd_rb:
 					err = ring_buffer__consume(ringbuf);
 					if (err < 0)
 						goto out;
+					break;
 				}
 			}
 		}
