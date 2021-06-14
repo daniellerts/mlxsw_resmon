@@ -461,7 +461,7 @@ static int resmon_d_loop(struct resmon_stat *stat, struct ring_buffer *ringbuf)
 	};
 
 	while (!should_quit) {
-		int nfds = poll(pollfds, ARRAY_SIZE(pollfds), 100 /*ms*/);
+		int nfds = poll(pollfds, ARRAY_SIZE(pollfds), -1);
 		if (nfds < 0 && errno != EINTR) {
 			fprintf(stderr, "Failed to poll: %m\n");
 			err = nfds;
