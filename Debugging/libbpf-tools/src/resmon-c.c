@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <time.h>
+#include <errno.h>
 
 #include <json-c/json_object.h>
 #include <json-c/json_tokener.h>
@@ -37,9 +38,9 @@ static void resmon_c_handle_response_error(struct json_object *error_obj)
 		fprintf(stderr, "Error %" PRId64 ": %s\n", code, message);
 }
 
-static struct json_object *resmon_c_handle_response(struct json_object *j,
-						    int expect_id,
-						    enum json_type result_type)
+static bool resmon_c_handle_response(struct json_object *j, int expect_id,
+				     enum json_type result_type,
+				     struct json_object **ret_result)
 {
 	struct json_object *id;
 	struct json_object *result;
@@ -50,28 +51,29 @@ static struct json_object *resmon_c_handle_response(struct json_object *j,
 	if (err) {
 		fprintf(stderr, "Invalid response object: %s\n", error);
 		free(error);
-		return NULL;
+		return false;
 	}
 
 	if (!resmon_c_validate_id(id, expect_id)) {
 		fprintf(stderr, "Unknown response ID: %s\n",
 			json_object_to_json_string(id));
-		return NULL;
+		return false;
 	}
 
 	if (is_error) {
 		resmon_c_handle_response_error(result);
-		return NULL;
+		return false;
 	}
 
 	if (json_object_get_type(result) != result_type) {
 		fprintf(stderr, "Unexpected result type: %s expected, got %s\n",
 			json_type_to_name(json_object_get_type(result)),
 			json_type_to_name(result_type));
-		return NULL;
+		return false;
 	}
 
-	return json_object_get(result);
+	*ret_result = json_object_get(result);
+	return true;
 }
 
 static struct json_object *resmon_c_send_request(struct json_object *request)
@@ -137,9 +139,8 @@ int resmon_c_ping(void)
 		goto put_request;
 	}
 
-	struct json_object *result = resmon_c_handle_response(response, id,
-							      json_type_int);
-	if (result == NULL) {
+	struct json_object *result;
+	if (!resmon_c_handle_response(response, id, json_type_int, &result)) {
 		err = -1;
 		goto put_response;
 	}
@@ -180,9 +181,8 @@ int resmon_c_stop(void)
 		goto put_request;
 	}
 
-	struct json_object *result = resmon_c_handle_response(response, id,
-							    json_type_boolean);
-	if (result == NULL) {
+	struct json_object *result;
+	if (!resmon_c_handle_response(response, id, json_type_boolean, &result)) {
 		err = -1;
 		goto put_response;
 	}

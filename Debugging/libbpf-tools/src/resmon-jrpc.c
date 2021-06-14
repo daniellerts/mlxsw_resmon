@@ -136,6 +136,7 @@ struct resmon_jrpc_policy {
 
 static int resmon_jrpc_dissect(struct json_object *obj,
 			       struct resmon_jrpc_policy policy[],
+			       bool seen[],
 			       struct json_object *values[],
 			       size_t policy_size,
 			       char **error)
@@ -169,12 +170,13 @@ static int resmon_jrpc_dissect(struct json_object *obj,
 					return -1;
 				}
 
-				if (values[i] != NULL) {
+				if (seen[i]) {
 					asprintf(error, "Duplicate member %s",
 						 key);
 					return -1;
 				}
 
+				seen[i] = true;
 				values[i] = val;
 				found = true;
 				break;
@@ -189,7 +191,7 @@ static int resmon_jrpc_dissect(struct json_object *obj,
 
 	for (size_t i = 0; i < policy_size; i++) {
 		struct resmon_jrpc_policy *pol = &policy[i];
-		if (values[i] == NULL && pol->required) {
+		if (!seen[i] && pol->required) {
 			asprintf(error, "Required member %s not present",
 				 pol->key);
 			return -1;
@@ -233,9 +235,10 @@ int resmon_jrpc_dissect_request(struct json_object *obj,
 				  .required = true },
 		[pol_params] =  { .key = "params", .any_type = true },
 	};
+	bool seen[ARRAY_SIZE(policy)] = {};
 	struct json_object *values[ARRAY_SIZE(policy)] = {};
-	int err = resmon_jrpc_dissect(obj, policy, values, ARRAY_SIZE(policy),
-				      error);
+	int err = resmon_jrpc_dissect(obj, policy, seen, values,
+				      ARRAY_SIZE(policy), error);
 	if (err)
 		return err;
 
@@ -268,28 +271,27 @@ int resmon_jrpc_dissect_response(struct json_object *obj,
 		[pol_error] =   { .key = "error", .type = json_type_object },
 		[pol_result] =  { .key = "result", .any_type = true },
 	};
+	bool seen[ARRAY_SIZE(policy)] = {};
 	struct json_object *values[ARRAY_SIZE(policy)] = {};
-	int err = resmon_jrpc_dissect(obj, policy, values, ARRAY_SIZE(policy),
-				      error);
+	int err = resmon_jrpc_dissect(obj, policy, seen, values,
+				      ARRAY_SIZE(policy), error);
 	if (err)
 		return err;
 
 	if (!resmon_jrpc_validate_version(values[pol_jsonrpc], error))
 		return -1;
 
-	struct json_object *e = values[pol_error];
-	struct json_object *r = values[pol_result];
-	if (e != NULL && r != NULL) {
+	if (seen[pol_error] && seen[pol_result]) {
 		asprintf(error, "Both error and result present in jsonrpc response");
 		return -1;
-	} else if (e == NULL && r == NULL) {
+	} else if (!seen[pol_error] && !seen[pol_result]) {
 		asprintf(error, "Neither error nor result present in jsonrpc response");
 		return -1;
 	}
 
 	*id = values[pol_id];
-	*result = r ?: e;
-	*is_error = e;
+	*result = seen[pol_result] ? values[pol_result] : values[pol_error];
+	*is_error = seen[pol_error];
 	return 0;
 }
 
@@ -311,9 +313,10 @@ int resmon_jrpc_dissect_error(struct json_object *obj,
 				  .required = true },
 		[pol_data] =    { .key = "data", .any_type = true },
 	};
+	bool seen[ARRAY_SIZE(policy)] = {};
 	struct json_object *values[ARRAY_SIZE(policy)] = {};
-	int err = resmon_jrpc_dissect(obj, policy, values, ARRAY_SIZE(policy),
-				      error);
+	int err = resmon_jrpc_dissect(obj, policy, seen, values,
+				      ARRAY_SIZE(policy), error);
 	if (err)
 		return err;
 
@@ -328,7 +331,7 @@ int resmon_jrpc_dissect_params_empty(struct json_object *obj,
 {
 	if (obj == NULL)
 		return 0;
-	return resmon_jrpc_dissect(obj, NULL, NULL, 0, error);
+	return resmon_jrpc_dissect(obj, NULL, NULL, NULL, 0, error);
 }
 
 int resmon_jrpc_dissect_params_emad(struct json_object *obj,
@@ -343,9 +346,10 @@ int resmon_jrpc_dissect_params_emad(struct json_object *obj,
 		[pol_payload] = { .key = "payload", .type = json_type_string,
 				  .required = true },
 	};
+	bool seen[ARRAY_SIZE(policy)] = {};
 	struct json_object *values[ARRAY_SIZE(policy)] = {};
-	int err = resmon_jrpc_dissect(obj, policy, values, ARRAY_SIZE(policy),
-				      error);
+	int err = resmon_jrpc_dissect(obj, policy, seen, values,
+				      ARRAY_SIZE(policy), error);
 	if (err)
 		return err;
 

@@ -328,14 +328,16 @@ static void resmon_d_handle_emad(struct resmon_stat *stat,
 	struct json_object *obj = resmon_jrpc_new_object(id);
 	if (obj == NULL)
 		return;
-	if (resmon_jrpc_object_take_add(obj, "result", NULL))
-		goto put_obj;
+	if (json_object_object_add(obj, "result", NULL))
+		goto free_dec_payload;
 	resmon_jrpc_take_send(peer, obj);
 
 out:
 	free(dec_payload);
 	return;
 
+free_dec_payload:
+	free(dec_payload);
 put_obj:
 	json_object_put(obj);
 respond_memerr:
