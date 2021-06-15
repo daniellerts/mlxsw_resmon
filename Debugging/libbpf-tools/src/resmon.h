@@ -169,6 +169,12 @@ int resmon_stat_ptce3_free(struct resmon_stat *stat,
 		       uint16_t delta_start,
 		       uint8_t erp_id);
 
+int resmon_stat_kvdl_alloc(struct resmon_stat *stat,
+			   uint32_t index,
+			   struct resmon_stat_kvd_alloc kvd_alloc);
+int resmon_stat_kvdl_free(struct resmon_stat *stat,
+			  uint32_t index,
+			  uint32_t slots);
 /* resmon-reg.c */
 
 enum resmon_reg_process_result {
@@ -176,6 +182,7 @@ enum resmon_reg_process_result {
 	resmon_reg_process_truncated_payload,
 	resmon_reg_process_no_register,
 	resmon_reg_process_unknown_register,
+	resmon_reg_process_inconsistent_register,
 	resmon_reg_process_insert_failed,
 	resmon_reg_process_delete_failed,
 };

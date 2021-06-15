@@ -120,12 +120,29 @@ resmon_stat_ptce3_key(struct resmon_stat_tcam_region_info tcam_region_info,
 RESMON_STAT_KEY_HASH_FN(resmon_stat_ptce3_hash, struct resmon_stat_ptce3_key);
 RESMON_STAT_KEY_EQ_FN(resmon_stat_ptce3_eq, struct resmon_stat_ptce3_key);
 
+struct resmon_stat_kvdl_key {
+	struct resmon_stat_key base;
+	uint32_t index;
+};
+
+static struct resmon_stat_kvdl_key
+resmon_stat_kvdl_key(uint32_t index)
+{
+	return (struct resmon_stat_kvdl_key) {
+		.index = index,
+	};
+}
+
+RESMON_STAT_KEY_HASH_FN(resmon_stat_kvdl_hash, struct resmon_stat_kvdl_key);
+RESMON_STAT_KEY_EQ_FN(resmon_stat_kvdl_eq, struct resmon_stat_kvdl_key);
+
 struct resmon_stat
 {
 	struct resmon_stat_counters counters;
 	struct lh_table *ralue;
 	struct lh_table *ptar;
 	struct lh_table *ptce3;
+	struct lh_table *kvdl;
 };
 
 static struct resmon_stat_kvd_alloc *
@@ -163,13 +180,22 @@ struct resmon_stat *resmon_stat_create(void)
 	if (ptce3_tab == NULL)
 		goto free_ptar_tab;
 
+	struct lh_table *kvdl_tab = lh_table_new(1, resmon_stat_entry_free,
+						 resmon_stat_kvdl_hash,
+						 resmon_stat_kvdl_eq);
+	if (kvdl_tab == NULL)
+		goto free_ptce3_tab;
+
 	*stat = (struct resmon_stat){
 		.ralue = ralue_tab,
 		.ptar = ptar_tab,
 		.ptce3 = ptce3_tab,
+		.kvdl = kvdl_tab,
 	};
 	return stat;
 
+free_ptce3_tab:
+	lh_table_free(ptce3_tab);
 free_ptar_tab:
 	lh_table_free(ptar_tab);
 free_ralue_tab:
@@ -181,6 +207,7 @@ free_stat:
 
 void resmon_stat_destroy(struct resmon_stat *stat)
 {
+	lh_table_free(stat->kvdl);
 	lh_table_free(stat->ptce3);
 	lh_table_free(stat->ptar);
 	lh_table_free(stat->ralue);
@@ -354,4 +381,61 @@ resmon_stat_ptce3_free(struct resmon_stat *stat,
 		resmon_stat_ptce3_key(tcam_region_info, key_blocks, delta_mask,
 				      delta_value, delta_start, erp_id);
 	return resmon_stat_lh_delete(stat, stat->ptce3, &key.base);
+}
+
+static int resmon_stat_kvdl_alloc_1(struct resmon_stat *stat,
+				    uint32_t index,
+				    struct resmon_stat_kvd_alloc kvd_alloc)
+{
+	struct resmon_stat_kvdl_key key = resmon_stat_kvdl_key(index);
+	return resmon_stat_lh_update(stat, stat->kvdl,
+				     &key.base, sizeof key, kvd_alloc);
+}
+
+static int resmon_stat_kvdl_free_1(struct resmon_stat *stat,
+				   uint32_t index)
+{
+	struct resmon_stat_kvdl_key key = resmon_stat_kvdl_key(index);
+	return resmon_stat_lh_delete(stat, stat->kvdl, &key.base);
+}
+
+int resmon_stat_kvdl_alloc(struct resmon_stat *stat,
+			   uint32_t index,
+			   struct resmon_stat_kvd_alloc kvd_alloc)
+{
+	uint32_t i = 0;
+	int rc;
+
+	for (i = 0; i < kvd_alloc.slots; i++) {
+		struct resmon_stat_kvd_alloc kvd_alloc_1 = {
+			.slots = 1,
+			.counter = kvd_alloc.counter,
+		};
+		rc = resmon_stat_kvdl_alloc_1(stat, index + i, kvd_alloc_1);
+		if (rc != 0)
+			goto unroll;
+	}
+
+	return 0;
+
+unroll:
+	while (i-- > 0)
+		resmon_stat_kvdl_free_1(stat, index + i);
+	return rc;
+}
+
+int resmon_stat_kvdl_free(struct resmon_stat *stat,
+			  uint32_t index,
+			  uint32_t slots)
+{
+	uint32_t i = 0;
+	int rc = 0;
+
+	for (i = 0; i < slots; i++) {
+		int rc_1 = resmon_stat_kvdl_free_1(stat, index + i);
+		if (rc_1 != 0)
+			rc = rc_1;
+	}
+
+	return rc;
 }

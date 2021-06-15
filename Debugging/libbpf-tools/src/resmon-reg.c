@@ -229,7 +229,7 @@ struct resmon_reg_iedr {
 
 	uint32_be_t resv5;
 
-	struct resmon_reg_iedr_record record[64];
+	struct resmon_reg_iedr_record records[64];
 };
 
 static struct resmon_reg_emad_tl
@@ -413,6 +413,60 @@ oob:
 	return resmon_reg_process_truncated_payload;
 }
 
+static enum resmon_reg_process_result
+resmon_reg_handle_pefa(struct resmon_stat *stat, const uint8_t *payload,
+		       size_t payload_len)
+{
+	const struct resmon_reg_pefa *reg =
+		RESMON_REG_READ(sizeof *reg, payload, payload_len);
+
+	struct resmon_stat_kvd_alloc kvd_alloc = {
+		.slots = 1,
+		.counter = RESMON_COUNTER_ACTSET,
+	};
+
+	int rc = resmon_stat_kvdl_alloc(stat, resmon_reg_pefa_index(reg),
+					kvd_alloc);
+	if (rc != 0)
+		return resmon_reg_process_insert_failed;
+
+	return resmon_reg_process_ok;
+
+oob:
+	return resmon_reg_process_truncated_payload;
+}
+
+static int resmon_reg_handle_iedr_record(struct resmon_stat *stat,
+					 struct resmon_reg_iedr_record record)
+{
+	uint32_t index = resmon_reg_iedr_record_index_start(&record);
+	uint32_t size = resmon_reg_iedr_record_size(&record);
+	return resmon_stat_kvdl_free(stat, index, size);
+}
+
+static enum resmon_reg_process_result
+resmon_reg_handle_iedr(struct resmon_stat *stat, const uint8_t *payload,
+		       size_t payload_len)
+{
+	const struct resmon_reg_iedr *reg =
+		RESMON_REG_READ(sizeof *reg, payload, payload_len);
+	enum resmon_reg_process_result res = resmon_reg_process_ok;
+
+	if (reg->num_rec > ARRAY_SIZE(reg->records))
+		return resmon_reg_process_inconsistent_register;
+
+	for (size_t i = 0; i < reg->num_rec; i++) {
+		int rc = resmon_reg_handle_iedr_record(stat, reg->records[i]);
+		if (rc != 0)
+			res = resmon_reg_process_delete_failed;
+	}
+
+	return res;
+
+oob:
+	return resmon_reg_process_truncated_payload;
+}
+
 enum resmon_reg_process_result resmon_reg_process_emad(struct resmon_stat *stat,
 						       const uint8_t *buf,
 						       size_t len)
@@ -448,12 +502,10 @@ enum resmon_reg_process_result resmon_reg_process_emad(struct resmon_stat *stat,
 		return resmon_reg_handle_ptar(stat, buf, len);
 	case 0x3027: /* MLXSW_REG_PTCE3_ID */
 		return resmon_reg_handle_ptce3(stat, buf, len);
-#if 0
 	case 0x300F: /* MLXSW_REG_PEFA_ID */
-		return handle_pefa(buf);
+		return resmon_reg_handle_pefa(stat, buf, len);
 	case 0x3804: /* MLXSW_REG_IEDR_ID */
-		return handle_iedr(buf);
-#endif
+		return resmon_reg_handle_iedr(stat, buf, len);
 	}
 
 	return resmon_reg_process_unknown_register;

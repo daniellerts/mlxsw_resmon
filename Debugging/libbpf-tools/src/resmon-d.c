@@ -328,6 +328,11 @@ static void resmon_d_handle_emad(struct resmon_stat *stat,
 				       "EMAD processing error",
 				       "EMAD malformed: Unknown register");
 		goto out;
+	case resmon_reg_process_inconsistent_register:
+		resmon_d_respond_error(peer, id, res,
+				       "EMAD processing error",
+				       "EMAD malformed: Inconsistent register");
+		goto out;
 	case resmon_reg_process_ok:
 		break;
 	default:
