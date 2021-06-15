@@ -49,7 +49,7 @@ resmon_stat_key_copy(const struct resmon_stat_key *key, size_t size)
 	}
 
 struct resmon_stat_ralue_key {
-	struct resmon_stat_key super;
+	struct resmon_stat_key base;
 	uint8_t protocol;
 	uint8_t prefix_len;
 	uint16_t virtual_router;
@@ -74,7 +74,7 @@ RESMON_STAT_KEY_HASH_FN(resmon_stat_ralue_hash, struct resmon_stat_ralue_key);
 RESMON_STAT_KEY_EQ_FN(resmon_stat_ralue_eq, struct resmon_stat_ralue_key);
 
 struct resmon_stat_ptar_key {
-	struct resmon_stat_key super;
+	struct resmon_stat_key base;
 	struct resmon_stat_tcam_region_info tcam_region_info;
 };
 
@@ -90,7 +90,7 @@ RESMON_STAT_KEY_HASH_FN(resmon_stat_ptar_hash, struct resmon_stat_ptar_key);
 RESMON_STAT_KEY_EQ_FN(resmon_stat_ptar_eq, struct resmon_stat_ptar_key);
 
 struct resmon_stat_ptce3_key {
-	struct resmon_stat_key super;
+	struct resmon_stat_key base;
 	struct resmon_stat_tcam_region_info tcam_region_info;
 	struct resmon_stat_flex2_key_blocks flex2_key_blocks;
 	uint8_t delta_mask;
@@ -282,7 +282,7 @@ int resmon_stat_ralue_update(struct resmon_stat *stat,
 		resmon_stat_ralue_key(protocol, prefix_len, virtual_router,
 				      dip);
 	return resmon_stat_lh_update(stat, stat->ralue,
-				     &key.super, sizeof key, kvd_alloc);
+				     &key.base, sizeof key, kvd_alloc);
 }
 
 int resmon_stat_ralue_delete(struct resmon_stat *stat,
@@ -294,7 +294,7 @@ int resmon_stat_ralue_delete(struct resmon_stat *stat,
 	struct resmon_stat_ralue_key key =
 		resmon_stat_ralue_key(protocol, prefix_len, virtual_router,
 				      dip);
-	return resmon_stat_lh_delete(stat, stat->ralue, &key.super);
+	return resmon_stat_lh_delete(stat, stat->ralue, &key.base);
 }
 
 int resmon_stat_ptar_alloc(struct resmon_stat *stat,
@@ -304,7 +304,7 @@ int resmon_stat_ptar_alloc(struct resmon_stat *stat,
 	struct resmon_stat_ptar_key key =
 		resmon_stat_ptar_key(tcam_region_info);
 	return resmon_stat_lh_update(stat, stat->ptar,
-				     &key.super, sizeof key, kvd_alloc);
+				     &key.base, sizeof key, kvd_alloc);
 }
 
 int resmon_stat_ptar_free(struct resmon_stat *stat,
@@ -312,7 +312,7 @@ int resmon_stat_ptar_free(struct resmon_stat *stat,
 {
 	struct resmon_stat_ptar_key key =
 		resmon_stat_ptar_key(tcam_region_info);
-	return resmon_stat_lh_delete(stat, stat->ptar, &key.super);
+	return resmon_stat_lh_delete(stat, stat->ptar, &key.base);
 }
 
 int resmon_stat_ptar_get(struct resmon_stat *stat,
@@ -321,7 +321,7 @@ int resmon_stat_ptar_get(struct resmon_stat *stat,
 {
 	struct resmon_stat_ptar_key key =
 		resmon_stat_ptar_key(tcam_region_info);
-	return resmon_stat_lh_get(stat->ptar, &key.super, ret_kvd_alloc);
+	return resmon_stat_lh_get(stat->ptar, &key.base, ret_kvd_alloc);
 }
 
 int
@@ -338,7 +338,7 @@ resmon_stat_ptce3_alloc(struct resmon_stat *stat,
 		resmon_stat_ptce3_key(tcam_region_info, key_blocks, delta_mask,
 				      delta_value, delta_start, erp_id);
 	return resmon_stat_lh_update(stat, stat->ptce3,
-				     &key.super, sizeof key, kvd_alloc);
+				     &key.base, sizeof key, kvd_alloc);
 }
 
 int
@@ -353,5 +353,5 @@ resmon_stat_ptce3_free(struct resmon_stat *stat,
 	struct resmon_stat_ptce3_key key =
 		resmon_stat_ptce3_key(tcam_region_info, key_blocks, delta_mask,
 				      delta_value, delta_start, erp_id);
-	return resmon_stat_lh_delete(stat, stat->ptce3, &key.super);
+	return resmon_stat_lh_delete(stat, stat->ptce3, &key.base);
 }
