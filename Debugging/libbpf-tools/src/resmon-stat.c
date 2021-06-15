@@ -36,6 +36,18 @@ resmon_stat_key_copy(const struct resmon_stat_key *key, size_t size)
 	return copy;
 }
 
+#define RESMON_STAT_KEY_HASH_FN(name, type)				\
+	static unsigned long name(const void *k)			\
+	{								\
+		return resmon_stat_fnv_1(k, sizeof(type));		\
+	}
+
+#define RESMON_STAT_KEY_EQ_FN(name, type)				\
+	static int name(const void *k1, const void *k2)			\
+	{								\
+		return memcmp(k1, k2, sizeof(type)) == 0;		\
+	}
+
 struct resmon_stat_ralue_key {
 	struct resmon_stat_key super;
 	uint8_t protocol;
@@ -44,30 +56,16 @@ struct resmon_stat_ralue_key {
 	struct resmon_stat_dip dip;
 };
 
-static unsigned long resmon_stat_ralue_hash(const void *k)
-{
-	return resmon_stat_fnv_1(k, sizeof(struct resmon_stat_ralue_key));
-}
-
-static int resmon_stat_ralue_eq(const void *k1, const void *k2)
-{
-	return memcmp(k1, k2, sizeof(struct resmon_stat_ralue_key)) == 0;
-}
+RESMON_STAT_KEY_HASH_FN(resmon_stat_ralue_hash, struct resmon_stat_ralue_key);
+RESMON_STAT_KEY_EQ_FN(resmon_stat_ralue_eq, struct resmon_stat_ralue_key);
 
 struct resmon_stat_ptar_key {
 	struct resmon_stat_key super;
 	struct resmon_stat_tcam_region_info tcam_region_info;
 };
 
-static unsigned long resmon_stat_ptar_hash(const void *k)
-{
-	return resmon_stat_fnv_1(k, sizeof(struct resmon_stat_ptar_key));
-}
-
-static int resmon_stat_ptar_eq(const void *k1, const void *k2)
-{
-	return memcmp(k1, k2, sizeof(struct resmon_stat_ptar_key)) == 0;
-}
+RESMON_STAT_KEY_HASH_FN(resmon_stat_ptar_hash, struct resmon_stat_ptar_key);
+RESMON_STAT_KEY_EQ_FN(resmon_stat_ptar_eq, struct resmon_stat_ptar_key);
 
 struct resmon_stat_ptce3_key {
 	struct resmon_stat_key super;
@@ -79,15 +77,8 @@ struct resmon_stat_ptce3_key {
 	uint8_t erp_id;
 };
 
-static unsigned long resmon_stat_ptce3_hash(const void *k)
-{
-	return resmon_stat_fnv_1(k, sizeof(struct resmon_stat_ptce3_key));
-}
-
-static int resmon_stat_ptce3_eq(const void *k1, const void *k2)
-{
-	return memcmp(k1, k2, sizeof(struct resmon_stat_ptce3_key)) == 0;
-}
+RESMON_STAT_KEY_HASH_FN(resmon_stat_ptce3_hash, struct resmon_stat_ptce3_key);
+RESMON_STAT_KEY_EQ_FN(resmon_stat_ptce3_eq, struct resmon_stat_ptce3_key);
 
 struct resmon_stat
 {
