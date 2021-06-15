@@ -56,6 +56,20 @@ struct resmon_stat_ralue_key {
 	struct resmon_stat_dip dip;
 };
 
+static struct resmon_stat_ralue_key
+resmon_stat_ralue_key(uint8_t protocol,
+		      uint8_t prefix_len,
+		      uint16_t virtual_router,
+		      struct resmon_stat_dip dip)
+{
+	return (struct resmon_stat_ralue_key) {
+		.protocol = protocol,
+		.prefix_len = prefix_len,
+		.virtual_router = virtual_router,
+		.dip = dip,
+	};
+}
+
 RESMON_STAT_KEY_HASH_FN(resmon_stat_ralue_hash, struct resmon_stat_ralue_key);
 RESMON_STAT_KEY_EQ_FN(resmon_stat_ralue_eq, struct resmon_stat_ralue_key);
 
@@ -63,6 +77,14 @@ struct resmon_stat_ptar_key {
 	struct resmon_stat_key super;
 	struct resmon_stat_tcam_region_info tcam_region_info;
 };
+
+static struct resmon_stat_ptar_key
+resmon_stat_ptar_key(struct resmon_stat_tcam_region_info tcam_region_info)
+{
+	return (struct resmon_stat_ptar_key) {
+		.tcam_region_info = tcam_region_info,
+	};
+}
 
 RESMON_STAT_KEY_HASH_FN(resmon_stat_ptar_hash, struct resmon_stat_ptar_key);
 RESMON_STAT_KEY_EQ_FN(resmon_stat_ptar_eq, struct resmon_stat_ptar_key);
@@ -76,6 +98,24 @@ struct resmon_stat_ptce3_key {
 	uint16_t delta_start;
 	uint8_t erp_id;
 };
+
+static struct resmon_stat_ptce3_key
+resmon_stat_ptce3_key(struct resmon_stat_tcam_region_info tcam_region_info,
+		      const struct resmon_stat_flex2_key_blocks *key_blocks,
+		      uint8_t delta_mask,
+		      uint8_t delta_value,
+		      uint16_t delta_start,
+		      uint8_t erp_id)
+{
+	return (struct resmon_stat_ptce3_key) {
+		.tcam_region_info = tcam_region_info,
+		.flex2_key_blocks = *key_blocks,
+		.delta_mask = delta_mask,
+		.delta_value = delta_value,
+		.delta_start = delta_start,
+		.erp_id = erp_id,
+	};
+}
 
 RESMON_STAT_KEY_HASH_FN(resmon_stat_ptce3_hash, struct resmon_stat_ptce3_key);
 RESMON_STAT_KEY_EQ_FN(resmon_stat_ptce3_eq, struct resmon_stat_ptce3_key);
@@ -238,12 +278,9 @@ int resmon_stat_ralue_update(struct resmon_stat *stat,
 			     struct resmon_stat_dip dip,
 			     struct resmon_stat_kvd_alloc kvd_alloc)
 {
-	struct resmon_stat_ralue_key key = {
-		.protocol = protocol,
-		.prefix_len = prefix_len,
-		.virtual_router = virtual_router,
-		.dip = dip,
-	};
+	struct resmon_stat_ralue_key key =
+		resmon_stat_ralue_key(protocol, prefix_len, virtual_router,
+				      dip);
 	return resmon_stat_lh_update(stat, stat->ralue,
 				     &key.super, sizeof key, kvd_alloc);
 }
@@ -254,12 +291,9 @@ int resmon_stat_ralue_delete(struct resmon_stat *stat,
 			     uint16_t virtual_router,
 			     struct resmon_stat_dip dip)
 {
-	struct resmon_stat_ralue_key key = {
-		.protocol = protocol,
-		.prefix_len = prefix_len,
-		.virtual_router = virtual_router,
-		.dip = dip,
-	};
+	struct resmon_stat_ralue_key key =
+		resmon_stat_ralue_key(protocol, prefix_len, virtual_router,
+				      dip);
 	return resmon_stat_lh_delete(stat, stat->ralue, &key.super);
 }
 
@@ -267,9 +301,8 @@ int resmon_stat_ptar_alloc(struct resmon_stat *stat,
 			   struct resmon_stat_tcam_region_info tcam_region_info,
 			   struct resmon_stat_kvd_alloc kvd_alloc)
 {
-	struct resmon_stat_ptar_key key = {
-		.tcam_region_info = tcam_region_info,
-	};
+	struct resmon_stat_ptar_key key =
+		resmon_stat_ptar_key(tcam_region_info);
 	return resmon_stat_lh_update(stat, stat->ptar,
 				     &key.super, sizeof key, kvd_alloc);
 }
@@ -277,9 +310,8 @@ int resmon_stat_ptar_alloc(struct resmon_stat *stat,
 int resmon_stat_ptar_free(struct resmon_stat *stat,
 			  struct resmon_stat_tcam_region_info tcam_region_info)
 {
-	struct resmon_stat_ptar_key key = {
-		.tcam_region_info = tcam_region_info,
-	};
+	struct resmon_stat_ptar_key key =
+		resmon_stat_ptar_key(tcam_region_info);
 	return resmon_stat_lh_delete(stat, stat->ptar, &key.super);
 }
 
@@ -287,9 +319,8 @@ int resmon_stat_ptar_get(struct resmon_stat *stat,
 			 struct resmon_stat_tcam_region_info tcam_region_info,
 			 struct resmon_stat_kvd_alloc *ret_kvd_alloc)
 {
-	struct resmon_stat_ptar_key key = {
-		.tcam_region_info = tcam_region_info,
-	};
+	struct resmon_stat_ptar_key key =
+		resmon_stat_ptar_key(tcam_region_info);
 	return resmon_stat_lh_get(stat->ptar, &key.super, ret_kvd_alloc);
 }
 
@@ -303,14 +334,9 @@ resmon_stat_ptce3_alloc(struct resmon_stat *stat,
 			uint8_t erp_id,
 			struct resmon_stat_kvd_alloc kvd_alloc)
 {
-	struct resmon_stat_ptce3_key key = {
-		.tcam_region_info = tcam_region_info,
-		.flex2_key_blocks = *key_blocks,
-		.delta_mask = delta_mask,
-		.delta_value = delta_value,
-		.delta_start = delta_start,
-		.erp_id = erp_id,
-	};
+	struct resmon_stat_ptce3_key key =
+		resmon_stat_ptce3_key(tcam_region_info, key_blocks, delta_mask,
+				      delta_value, delta_start, erp_id);
 	return resmon_stat_lh_update(stat, stat->ptce3,
 				     &key.super, sizeof key, kvd_alloc);
 }
@@ -324,13 +350,8 @@ resmon_stat_ptce3_free(struct resmon_stat *stat,
 		       uint16_t delta_start,
 		       uint8_t erp_id)
 {
-	struct resmon_stat_ptce3_key key = {
-		.tcam_region_info = tcam_region_info,
-		.flex2_key_blocks = *key_blocks,
-		.delta_mask = delta_mask,
-		.delta_value = delta_value,
-		.delta_start = delta_start,
-		.erp_id = erp_id,
-	};
+	struct resmon_stat_ptce3_key key =
+		resmon_stat_ptce3_key(tcam_region_info, key_blocks, delta_mask,
+				      delta_value, delta_start, erp_id);
 	return resmon_stat_lh_delete(stat, stat->ptce3, &key.super);
 }
