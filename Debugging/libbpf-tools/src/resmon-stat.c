@@ -8,12 +8,13 @@
 static void resmon_stat_entry_free(struct lh_entry *e)
 {
 	if (!e->k_is_constant)
-		free((void *) e->k);
-	free((void *) e->v);
+		free(lh_entry_k(e));
+	free(lh_entry_v(e));
 }
 
-static uint64_t resmon_stat_fnv_1(const uint8_t *buf, size_t len)
+static uint64_t resmon_stat_fnv_1(const void *ptr, size_t len)
 {
+	const uint8_t *buf = ptr;
 	uint64_t hash = 0xcbf29ce484222325ULL;
 	for (size_t i = 0; i < len; i++) {
 		hash = hash * 0x100000001b3ULL;
@@ -22,8 +23,7 @@ static uint64_t resmon_stat_fnv_1(const uint8_t *buf, size_t len)
 	return hash;
 }
 
-struct resmon_stat_key {
-};
+struct resmon_stat_key {};
 
 static struct resmon_stat_key *
 resmon_stat_key_copy(const struct resmon_stat_key *key, size_t size)

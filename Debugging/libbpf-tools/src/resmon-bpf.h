@@ -25,19 +25,6 @@ struct kvd_allocation {
 	enum resmon_counter counter;
 };
 
-struct ptar_key {
-	uint8_t tcam_region_info[16];
-};
-
-struct ptce3_key {
-	uint8_t tcam_region_info[16];
-	uint8_t flex2_key_blocks[96];
-	uint8_t delta_mask;
-	uint8_t delta_value;
-	uint16_t delta_start;
-	uint8_t erp_id;
-};
-
 struct kvdl_key {
 	uint32_t index;
 };
