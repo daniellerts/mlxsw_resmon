@@ -81,6 +81,13 @@ $(OUTPUT)/emadlatency.o: emadlatency.h
 $(OUTPUT)/emadlatency.bpf.o: emadlatency.h
 
 $(OUTPUT)/resmon.o: resmon.h
+$(OUTPUT)/resmon-back.o: resmon.h
+$(OUTPUT)/resmon-c.o: resmon.h
+$(OUTPUT)/resmon-d.o: resmon.h
+$(OUTPUT)/resmon-jrpc.o: resmon.h
+$(OUTPUT)/resmon-reg.o: resmon.h
+$(OUTPUT)/resmon-sock.o: resmon.h
+$(OUTPUT)/resmon-stat.o: resmon.h
 $(OUTPUT)/resmon.bpf.o: resmon.h
 
 # Build application binary
@@ -90,9 +97,14 @@ emadlatency trapagg: %: $(OUTPUT)/%.o $(LIBBPF_OBJ) $(COMMON_OBJ) | $(OUTPUT) $(
 
 $(OUTPUT)/resmon.o: INCLUDES += $(shell pkgconf --cflags libnl-3.0 libnl-genl-3.0)
 resmon: CFLAGS += $(shell pkgconf --libs libelf json-c)
-resmon: $(OUTPUT)/resmon.o $(OUTPUT)/resmon-sock.o $(OUTPUT)/resmon-jrpc.o \
-		$(OUTPUT)/resmon-c.o $(OUTPUT)/resmon-d.o \
-		$(OUTPUT)/resmon-stat.o $(OUTPUT)/resmon-reg.o \
+resmon:		$(OUTPUT)/resmon.o \
+		$(OUTPUT)/resmon-back.o \
+		$(OUTPUT)/resmon-c.o \
+		$(OUTPUT)/resmon-d.o \
+		$(OUTPUT)/resmon-jrpc.o \
+		$(OUTPUT)/resmon-reg.o \
+		$(OUTPUT)/resmon-sock.o \
+		$(OUTPUT)/resmon-stat.o \
 		$(LIBBPF_OBJ) $(COMMON_OBJ) | $(OUTPUT) $(OUTPUT)/resmon.bpf.o
 	$(call msg,BINARY,$@)
 	$(Q)$(CC) $(CFLAGS) -lz $^ -o $@

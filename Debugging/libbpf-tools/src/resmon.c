@@ -45,7 +45,7 @@ static int resmon_common_args_only(int argc, char **argv,
 
 static int resmon_cmd_start(int argc, char **argv)
 {
-	return resmon_common_args_only(argc, argv, resmon_d_start);
+	return resmon_d_start(argc, argv);
 }
 
 static int resmon_cmd_stop(int argc, char **argv)

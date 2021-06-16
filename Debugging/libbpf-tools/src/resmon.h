@@ -2,7 +2,9 @@
 #ifndef RESMON_H
 #define RESMON_H
 
+#include <assert.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <unistd.h>
 #include <sys/un.h>
@@ -31,6 +33,14 @@ enum { resmon_counter_count = 0 RESMON_COUNTERS(EXPAND_AS_PLUS1) };
 #define NEXT_ARG_OK() (argc - 1 > 0)
 #define NEXT_ARG_FWD() do { argv++; argc--; } while(0)
 #define PREV_ARG() do { argv--; argc++; } while(0)
+
+#define __same_type(a, b) __builtin_types_compatible_p(typeof(a), typeof(b))
+#define container_of(ptr, type, member) ({				\
+	void *__mptr = (void *)(ptr);					\
+	static_assert(__same_type(*(ptr), ((type *)0)->member) ||	\
+		      __same_type(*(ptr), void),			\
+		      "pointer type mismatch in container_of()");	\
+	((type *)(__mptr - offsetof(type, member))); })
 
 /* resmon.c */
 
@@ -98,10 +108,6 @@ int resmon_jrpc_take_send(struct resmon_sock *sock, struct json_object *obj);
 int resmon_c_ping(void);
 int resmon_c_stop(void);
 int resmon_c_emad(int argc, char **argv);
-
-/* resmon-d.c */
-
-int resmon_d_start(void);
 
 /* resmon-stat.c */
 
@@ -175,6 +181,40 @@ int resmon_stat_kvdl_alloc(struct resmon_stat *stat,
 int resmon_stat_kvdl_free(struct resmon_stat *stat,
 			  uint32_t index,
 			  uint32_t slots);
+
+/* resmon-back.c */
+
+struct resmon_back {
+	const struct resmon_back_cls *cls;
+};
+
+struct resmon_back_cls {
+	struct resmon_back *(*init)(void);
+	void (*fini)(struct resmon_back *back);
+
+	int (*pollfd)(struct resmon_back *back);
+	int (*activity)(struct resmon_back *back, struct resmon_stat *stat);
+	bool (*handle_method)(struct resmon_back *back,
+			      struct resmon_stat *stat,
+			      const char *method,
+			      struct resmon_sock *peer,
+			      struct json_object *params_obj,
+			      struct json_object *id);
+};
+
+extern const struct resmon_back_cls resmon_back_cls_hw;
+extern const struct resmon_back_cls resmon_back_cls_mock;
+
+/* resmon-d.c */
+
+int resmon_d_start(int argc, char **argv);
+
+void resmon_d_respond_error(struct resmon_sock *ctl,
+			    struct json_object *id, int code,
+			    const char *message, const char *data);
+void resmon_d_respond_invalid_params(struct resmon_sock *ctl, const char *data);
+void resmon_d_respond_memerr(struct resmon_sock *peer, struct json_object *id);
+
 /* resmon-reg.c */
 
 enum resmon_reg_process_result {
