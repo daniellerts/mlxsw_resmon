@@ -97,6 +97,9 @@ int resmon_jrpc_dissect_params_emad(struct json_object *obj,
 				    const char **payload,
 				    size_t *payload_len,
 				    char **error);
+int resmon_jrpc_dissect_stats(struct json_object *obj,
+			      struct json_object **result,
+			      int *len, char **error);
 
 int resmon_jrpc_object_take_add(struct json_object *obj,
 				const char *key, struct json_object *val_obj);
@@ -108,6 +111,7 @@ int resmon_jrpc_take_send(struct resmon_sock *sock, struct json_object *obj);
 int resmon_c_ping(void);
 int resmon_c_stop(void);
 int resmon_c_emad(int argc, char **argv);
+int resmon_c_stats(void);
 
 /* resmon-stat.c */
 
