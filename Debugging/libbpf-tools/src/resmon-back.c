@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: (LGPL-2.1 OR BSD-2-Clause)
 #include <errno.h>
 #include <stdlib.h>
+#include <syslog.h>
 #include <json-c/json_object.h>
 
 #include "resmon.h"
@@ -20,7 +21,22 @@ static int resmon_back_libbpf_print_fn(enum libbpf_print_level level,
 {
 	if ((int)level > env.verbosity)
 		return 0;
-	return vfprintf(stderr, format, args);
+
+	int prio = 0;
+	switch (level) {
+        case LIBBPF_WARN:
+		prio = LOG_WARNING;
+		break;
+        case LIBBPF_INFO:
+		prio = LOG_INFO;
+		break;
+        case LIBBPF_DEBUG:
+		prio = LOG_DEBUG;
+		break;
+	}
+
+	vsyslog(prio, format, args);
+	return 0;
 }
 
 static int resmon_back_hw_rb_sample_cb(void *ctx, void *data, size_t len)
@@ -30,15 +46,8 @@ static int resmon_back_hw_rb_sample_cb(void *ctx, void *data, size_t len)
 	enum resmon_reg_process_result res =
 		resmon_reg_process_emad(back->stat, data, len);
 	if (res != resmon_reg_process_ok) {
-		// xxx enqueue a message? Or maybe this:
-		//
-		// # resmon -v start &
-		// listening on such and such socket
-		// # resmon -v ping
-		// resmon is alive
-		// # resmon -v listen
-		// listening
-		// ... waits for messages and prints them as they come
+		const char *reason = resmon_reg_process_result_str(res);
+		syslog(LOG_ERR, "EMAD processing error: %s", reason);
 	}
 	return 0;
 }
@@ -222,41 +231,11 @@ static void resmon_back_mock_handle_emad(struct resmon_stat *stat,
 
 	enum resmon_reg_process_result res =
 		resmon_reg_process_emad(stat, dec_payload, dec_payload_len);
-	switch (res) {
-	case resmon_reg_process_delete_failed:
+	if (res != resmon_reg_process_ok) {
+		const char *reason = resmon_reg_process_result_str(res);
 		resmon_d_respond_error(peer, id, res,
-				       "EMAD processing error",
-				       "Delete failed");
+				       "EMAD processing error", reason);
 		goto out;
-	case resmon_reg_process_insert_failed:
-		resmon_d_respond_error(peer, id, res,
-				       "EMAD processing error",
-				       "Insert failed");
-		goto out;
-	case resmon_reg_process_truncated_payload:
-		resmon_d_respond_error(peer, id, res,
-				       "EMAD processing error",
-				       "EMAD malformed: Payload truncated");
-		goto out;
-	case resmon_reg_process_no_register:
-		resmon_d_respond_error(peer, id, res,
-				       "EMAD processing error",
-				       "EMAD malformed: No register");
-		goto out;
-	case resmon_reg_process_unknown_register:
-		resmon_d_respond_error(peer, id, res,
-				       "EMAD processing error",
-				       "EMAD malformed: Unknown register");
-		goto out;
-	case resmon_reg_process_inconsistent_register:
-		resmon_d_respond_error(peer, id, res,
-				       "EMAD processing error",
-				       "EMAD malformed: Inconsistent register");
-		goto out;
-	case resmon_reg_process_ok:
-		break;
-	default:
-		assert(false);
 	}
 
 	struct json_object *obj = resmon_jrpc_new_object(id);

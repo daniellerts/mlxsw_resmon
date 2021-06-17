@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: (LGPL-2.1 OR BSD-2-Clause)
+#include <assert.h>
 #include <endian.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -513,4 +514,26 @@ enum resmon_reg_process_result resmon_reg_process_emad(struct resmon_stat *stat,
 
 oob:
 	return resmon_reg_process_truncated_payload;
+}
+
+const char *resmon_reg_process_result_str(enum resmon_reg_process_result res)
+{
+	switch (res) {
+	case resmon_reg_process_ok:
+		return "OK";
+	case resmon_reg_process_delete_failed:
+		return "Delete failed";
+	case resmon_reg_process_insert_failed:
+		return "Insert failed";
+	case resmon_reg_process_truncated_payload:
+		return "EMAD malformed: Payload truncated";
+	case resmon_reg_process_no_register:
+		return "EMAD malformed: No register";
+	case resmon_reg_process_unknown_register:
+		return "EMAD malformed: Unknown register";
+	case resmon_reg_process_inconsistent_register:
+		return "EMAD malformed: Inconsistent register";
+	}
+
+	assert(false);
 }

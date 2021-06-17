@@ -229,5 +229,6 @@ enum resmon_reg_process_result {
 enum resmon_reg_process_result resmon_reg_process_emad(struct resmon_stat *stat,
 						       const uint8_t *buf,
 						       size_t len);
+const char *resmon_reg_process_result_str(enum resmon_reg_process_result res);
 
 #endif /* RESMON_H */

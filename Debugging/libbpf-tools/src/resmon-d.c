@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <syslog.h>
 #include <json-c/json_object.h>
 #include <json-c/json_tokener.h>
 
@@ -386,8 +387,11 @@ static int resmon_d_do_start(const struct resmon_back_cls *back_cls)
 	if (back == NULL)
 		goto destroy_stat;
 
+	openlog("resmon", LOG_PID | LOG_CONS, LOG_USER);
+
 	err = resmon_d_loop(back, stat);
 
+	closelog();
 	back_cls->fini(back);
 destroy_stat:
 	resmon_stat_destroy(stat);
