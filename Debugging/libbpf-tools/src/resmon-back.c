@@ -47,7 +47,7 @@ static struct resmon_back *resmon_back_hw_init(void)
 {
 	int rc;
 
-	struct resmon_back_hw *back = malloc(sizeof *back);
+	struct resmon_back_hw *back = malloc(sizeof(*back));
 	if (back == NULL)
 		return NULL;
 
@@ -146,7 +146,7 @@ struct resmon_back_mock {
 
 static struct resmon_back *resmon_back_mock_init(void)
 {
-	struct resmon_back_mock *back = malloc(sizeof *back);
+	struct resmon_back_mock *back = malloc(sizeof(*back));
 	if (back == NULL)
 		return NULL;
 
@@ -174,7 +174,7 @@ static int resmon_back_mock_emad_decode_payload(uint8_t *dec, const char *enc,
 		char buf[3] = {enc[2 * i], enc[2 * i + 1], '\0'};
 		char *endptr = NULL;
 		errno = 0;
-		long int byte = strtol(buf, &endptr, 16);
+		long byte = strtol(buf, &endptr, 16);
 		if (errno || *endptr != '\0')
 			return -1;
 		dec[i] = byte;

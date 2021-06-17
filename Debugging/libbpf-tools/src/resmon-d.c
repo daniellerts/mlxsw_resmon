@@ -11,7 +11,7 @@
 
 #include "resmon.h"
 
-static bool should_quit = false;
+static bool should_quit;
 
 static void resmon_d_handle_signal(int sig)
 {
@@ -126,7 +126,7 @@ put_obj:
 	resmon_d_respond_memerr(peer, id);
 }
 
-static const char *resmon_d_counter_descriptions[] = {
+static const char *const resmon_d_counter_descriptions[] = {
 	RESMON_COUNTERS(RESMON_COUNTER_EXPAND_AS_DESC)
 };
 
@@ -431,7 +431,7 @@ int resmon_d_start(int argc, char **argv)
 		}
 		continue;
 
-	incomplete_command:
+incomplete_command:
 		fprintf(stderr, "Command line is not complete. Try option \"help\"\n");
 		return -1;
 	}

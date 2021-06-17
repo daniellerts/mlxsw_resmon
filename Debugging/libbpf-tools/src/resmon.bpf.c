@@ -83,14 +83,14 @@ static int push_to_ringbuf(const u8 *buf, size_t len)
 inline bool is_mlxsw_spectrum(struct devlink *devlink)
 {
 	static const char mlxsw_spectrum[] = "mlxsw_spectrum";
-	char name_buf[sizeof mlxsw_spectrum];
+	char name_buf[sizeof(mlxsw_spectrum)];
 
 	{
 		const char *drv_name = BPF_CORE_READ(devlink, dev, driver, name);
 		bpf_core_read_str(&name_buf, sizeof(name_buf), drv_name);
 	}
 
-	for (unsigned int i = 0; i < sizeof name_buf; i++)
+	for (unsigned int i = 0; i < sizeof(name_buf); i++)
 		if (name_buf[i] != mlxsw_spectrum[i])
 			return false;
 
@@ -112,16 +112,17 @@ int BPF_PROG(handle__devlink_hwmsg,
 
 	buf += EMAD_ETH_HDR_LEN;
 
-	bpf_core_read(&op_tlv, sizeof op_tlv, buf);
+	bpf_core_read(&op_tlv, sizeof(op_tlv), buf);
 	tlv_head = emad_tlv_decode_header(op_tlv.type_len_be);
 
 	/* Filter out queries and events. Later on we can assume `op'
-	 * fields in a register refer to a write. */
+	 * fields in a register refer to a write.
+	 */
 	if ((op_tlv.r_method & EMAD_OP_TLV_METHOD_MASK)
 	    != EMAD_OP_TLV_METHOD_WRITE)
 		return 0;
 
-        /* Filter out errors. */
+	/* Filter out errors. */
 	if (op_tlv.status & EMAD_OP_TLV_STATUS_MASK)
 		return 0;
 

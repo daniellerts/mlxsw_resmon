@@ -21,7 +21,7 @@ static struct sockaddr_un resmon_cli_sockaddr(void)
 {
 	static struct sockaddr_un sa = {};
 	if (sa.sun_family == AF_UNSPEC) {
-		snprintf(sa.sun_path, sizeof sa.sun_path,
+		snprintf(sa.sun_path, sizeof(sa.sun_path),
 			 "/var/run/resmon.cli.%d", getpid());
 		sa.sun_family = AF_LOCAL;
 	}
@@ -41,7 +41,7 @@ static int resmon_sock_open(struct sockaddr_un sa,
 
 	unlink(sa.sun_path);
 
-	int err = bind(fd, (struct sockaddr *) &sa, sizeof sa);
+	int err = bind(fd, (struct sockaddr *) &sa, sizeof(sa));
 	if (err < 0) {
 		fprintf(stderr, "Failed to bind control socket: %m\n");
 		goto close_fd;
@@ -50,7 +50,7 @@ static int resmon_sock_open(struct sockaddr_un sa,
 	*sock = (struct resmon_sock) {
 		.fd = fd,
 		.sa = sa,
-		.len = sizeof sa,
+		.len = sizeof(sa),
 	};
 	return 0;
 
@@ -85,7 +85,7 @@ int resmon_sock_open_c(struct resmon_sock *cli,
 	*peer = (struct resmon_sock) {
 		.fd = cli->fd,
 		.sa = resmon_ctl_sockaddr(),
-		.len = sizeof peer->sa,
+		.len = sizeof(peer->sa),
 	};
 	err = connect(cli->fd, (struct sockaddr *) &peer->sa, peer->len);
 	if (err != 0) {
@@ -115,7 +115,7 @@ int resmon_sock_recv(struct resmon_sock *sock, struct resmon_sock *peer,
 	*bufp = NULL;
 	*peer = (struct resmon_sock) {
 		.fd = sock->fd,
-		.len = sizeof peer->sa,
+		.len = sizeof(peer->sa),
 	};
 	ssize_t msgsz = recvfrom(sock->fd, NULL, 0, MSG_PEEK | MSG_TRUNC,
 				 (struct sockaddr *) &peer->sa, &peer->len);

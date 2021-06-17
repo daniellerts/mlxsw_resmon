@@ -311,7 +311,7 @@ int resmon_c_emad(int argc, char **argv)
 		}
 		continue;
 
-	incomplete_command:
+incomplete_command:
 		fprintf(stderr, "Command line is not complete. Try option \"help\"\n");
 		rc = -1;
 		goto out;

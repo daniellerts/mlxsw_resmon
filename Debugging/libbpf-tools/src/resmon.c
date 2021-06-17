@@ -86,8 +86,8 @@ static int resmon_help(void)
 	     "\n"
 	     "Usage: resmon [OPTIONS] { COMMAND | help }\n"
 	     "where  OPTIONS := [ -h | --help | -q | --quiet | -v | --verbose |\n"
-             "                    -V | --version | --bpffs <PATH> ]\n"
-             "       COMMAND := { start | stop | ping | stats }\n"
+	     "			  -V | --version | --bpffs <PATH> ]\n"
+	     "	     COMMAND := { start | stop | ping | stats }\n"
 	     );
 	return 0;
 }

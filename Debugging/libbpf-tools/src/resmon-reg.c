@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: (LGPL-2.1 OR BSD-2-Clause)
 #include <endian.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -265,7 +266,7 @@ resmon_reg_handle_ralue(struct resmon_stat *stat, const uint8_t *payload,
 			size_t payload_len)
 {
 	const struct resmon_reg_ralue *reg =
-		RESMON_REG_READ(sizeof *reg, payload, payload_len);
+		RESMON_REG_READ(sizeof(*reg), payload, payload_len);
 
 	uint8_t protocol = resmon_reg_ralue_protocol(reg);
 	uint8_t prefix_len = reg->prefix_len;
@@ -303,7 +304,7 @@ static struct resmon_stat_kvd_alloc
 resmon_reg_ptar_get_kvd_alloc(const struct resmon_reg_ptar *reg)
 {
 	size_t nkeys = 0;
-	for (size_t i = 0; i < sizeof reg->flexible_keys; i++)
+	for (size_t i = 0; i < sizeof(reg->flexible_keys); i++)
 		if (reg->flexible_keys[i])
 			nkeys++;
 
@@ -319,7 +320,7 @@ resmon_reg_handle_ptar(struct resmon_stat *stat, const uint8_t *payload,
 		       size_t payload_len)
 {
 	const struct resmon_reg_ptar *reg =
-		RESMON_REG_READ(sizeof *reg, payload, payload_len);
+		RESMON_REG_READ(sizeof(*reg), payload, payload_len);
 
 	switch (reg->key_type) {
 	case MLXSW_REG_PTAR_KEY_TYPE_FLEX:
@@ -331,7 +332,7 @@ resmon_reg_handle_ptar(struct resmon_stat *stat, const uint8_t *payload,
 
 	struct resmon_stat_tcam_region_info tcam_region_info;
 	memcpy(tcam_region_info.tcam_region_info, reg->tcam_region_info,
-	       sizeof tcam_region_info.tcam_region_info);
+	       sizeof(tcam_region_info.tcam_region_info));
 
 	int rc;
 	switch (resmon_reg_ptar_op(reg)) {
@@ -365,7 +366,7 @@ resmon_reg_handle_ptce3(struct resmon_stat *stat, const uint8_t *payload,
 {
 	int rc;
 	const struct resmon_reg_ptce3 *reg =
-		RESMON_REG_READ(sizeof *reg, payload, payload_len);
+		RESMON_REG_READ(sizeof(*reg), payload, payload_len);
 
 	switch (resmon_reg_ptce3_op(reg)) {
 	case MLXSW_REG_PTCE3_OP_WRITE_WRITE:
@@ -377,11 +378,11 @@ resmon_reg_handle_ptce3(struct resmon_stat *stat, const uint8_t *payload,
 
 	struct resmon_stat_tcam_region_info tcam_region_info;
 	memcpy(tcam_region_info.tcam_region_info, reg->tcam_region_info,
-	       sizeof tcam_region_info.tcam_region_info);
+	       sizeof(tcam_region_info.tcam_region_info));
 
 	struct resmon_stat_flex2_key_blocks key_blocks;
 	memcpy(key_blocks.flex2_key_blocks, reg->flex2_key_blocks,
-	       sizeof key_blocks.flex2_key_blocks);
+	       sizeof(key_blocks.flex2_key_blocks));
 
 	if (resmon_reg_ptce3_v(reg)) {
 		struct resmon_stat_kvd_alloc kvd_alloc;
@@ -418,7 +419,7 @@ resmon_reg_handle_pefa(struct resmon_stat *stat, const uint8_t *payload,
 		       size_t payload_len)
 {
 	const struct resmon_reg_pefa *reg =
-		RESMON_REG_READ(sizeof *reg, payload, payload_len);
+		RESMON_REG_READ(sizeof(*reg), payload, payload_len);
 
 	struct resmon_stat_kvd_alloc kvd_alloc = {
 		.slots = 1,
@@ -449,7 +450,7 @@ resmon_reg_handle_iedr(struct resmon_stat *stat, const uint8_t *payload,
 		       size_t payload_len)
 {
 	const struct resmon_reg_iedr *reg =
-		RESMON_REG_READ(sizeof *reg, payload, payload_len);
+		RESMON_REG_READ(sizeof(*reg), payload, payload_len);
 	enum resmon_reg_process_result res = resmon_reg_process_ok;
 
 	if (reg->num_rec > ARRAY_SIZE(reg->records))
@@ -474,18 +475,18 @@ enum resmon_reg_process_result resmon_reg_process_emad(struct resmon_stat *stat,
 	struct resmon_reg_emad_tl tl;
 
 	const struct resmon_reg_op_tlv *op_tlv =
-		RESMON_REG_READ(sizeof *op_tlv, buf, len);
+		RESMON_REG_READ(sizeof(*op_tlv), buf, len);
 	tl = resmon_reg_emad_decode_tl(op_tlv->type_len);
 
 	RESMON_REG_PULL(tl.length * 4, buf, len);
 	const struct resmon_reg_reg_tlv_head *reg_tlv =
-		RESMON_REG_READ(sizeof *reg_tlv, buf, len);
+		RESMON_REG_READ(sizeof(*reg_tlv), buf, len);
 	tl = resmon_reg_emad_decode_tl(reg_tlv->type_len);
 
 	/* Skip over the TLV if it is in fact a STRING TLV. */
 	if (tl.type == MLXSW_EMAD_TLV_TYPE_STRING) {
 		RESMON_REG_PULL(tl.length * 4, buf, len);
-		reg_tlv = RESMON_REG_READ(sizeof *reg_tlv, buf, len);
+		reg_tlv = RESMON_REG_READ(sizeof(*reg_tlv), buf, len);
 		tl = resmon_reg_emad_decode_tl(reg_tlv->type_len);
 	}
 
@@ -493,7 +494,7 @@ enum resmon_reg_process_result resmon_reg_process_emad(struct resmon_stat *stat,
 		return resmon_reg_process_no_register;
 
 	/* Get to the register payload. */
-	RESMON_REG_PULL(sizeof *reg_tlv, buf, len);
+	RESMON_REG_PULL(sizeof(*reg_tlv), buf, len);
 
 	switch (uint16_be_toh(op_tlv->reg_id)) {
 	case 0x8013: /* MLXSW_REG_RALUE_ID */

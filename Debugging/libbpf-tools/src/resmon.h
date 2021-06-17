@@ -29,10 +29,10 @@ enum resmon_counter {
 
 enum { resmon_counter_count = 0 RESMON_COUNTERS(EXPAND_AS_PLUS1) };
 
-#define NEXT_ARG() do { argv++; if (--argc <= 0) goto incomplete_command; } while(0)
+#define NEXT_ARG() do { argv++; if (--argc <= 0) goto incomplete_command; } while (0)
 #define NEXT_ARG_OK() (argc - 1 > 0)
-#define NEXT_ARG_FWD() do { argv++; argc--; } while(0)
-#define PREV_ARG() do { argv--; argc++; } while(0)
+#define NEXT_ARG_FWD() do { argv++; argc--; } while (0)
+#define PREV_ARG() do { argv--; argc++; } while (0)
 
 #define __same_type(a, b) __builtin_types_compatible_p(typeof(a), typeof(b))
 #define container_of(ptr, type, member) ({				\

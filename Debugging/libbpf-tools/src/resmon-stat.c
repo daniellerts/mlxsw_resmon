@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: (LGPL-2.1 OR BSD-2-Clause)
 #include <assert.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -136,8 +137,7 @@ resmon_stat_kvdl_key(uint32_t index)
 RESMON_STAT_KEY_HASH_FN(resmon_stat_kvdl_hash, struct resmon_stat_kvdl_key);
 RESMON_STAT_KEY_EQ_FN(resmon_stat_kvdl_eq, struct resmon_stat_kvdl_key);
 
-struct resmon_stat
-{
+struct resmon_stat {
 	struct resmon_stat_counters counters;
 	struct lh_table *ralue;
 	struct lh_table *ptar;
@@ -148,7 +148,7 @@ struct resmon_stat
 static struct resmon_stat_kvd_alloc *
 resmon_stat_kvd_alloc_copy(struct resmon_stat_kvd_alloc kvd_alloc)
 {
-	struct resmon_stat_kvd_alloc *copy = malloc(sizeof *copy);
+	struct resmon_stat_kvd_alloc *copy = malloc(sizeof(*copy));
 	if (copy == NULL)
 		return NULL;
 
@@ -158,7 +158,7 @@ resmon_stat_kvd_alloc_copy(struct resmon_stat_kvd_alloc kvd_alloc)
 
 struct resmon_stat *resmon_stat_create(void)
 {
-	struct resmon_stat *stat = malloc(sizeof *stat);
+	struct resmon_stat *stat = malloc(sizeof(*stat));
 	if (stat == NULL)
 		return NULL;
 
@@ -309,7 +309,7 @@ int resmon_stat_ralue_update(struct resmon_stat *stat,
 		resmon_stat_ralue_key(protocol, prefix_len, virtual_router,
 				      dip);
 	return resmon_stat_lh_update(stat, stat->ralue,
-				     &key.base, sizeof key, kvd_alloc);
+				     &key.base, sizeof(key), kvd_alloc);
 }
 
 int resmon_stat_ralue_delete(struct resmon_stat *stat,
@@ -331,7 +331,7 @@ int resmon_stat_ptar_alloc(struct resmon_stat *stat,
 	struct resmon_stat_ptar_key key =
 		resmon_stat_ptar_key(tcam_region_info);
 	return resmon_stat_lh_update(stat, stat->ptar,
-				     &key.base, sizeof key, kvd_alloc);
+				     &key.base, sizeof(key), kvd_alloc);
 }
 
 int resmon_stat_ptar_free(struct resmon_stat *stat,
@@ -365,7 +365,7 @@ resmon_stat_ptce3_alloc(struct resmon_stat *stat,
 		resmon_stat_ptce3_key(tcam_region_info, key_blocks, delta_mask,
 				      delta_value, delta_start, erp_id);
 	return resmon_stat_lh_update(stat, stat->ptce3,
-				     &key.base, sizeof key, kvd_alloc);
+				     &key.base, sizeof(key), kvd_alloc);
 }
 
 int
@@ -389,7 +389,7 @@ static int resmon_stat_kvdl_alloc_1(struct resmon_stat *stat,
 {
 	struct resmon_stat_kvdl_key key = resmon_stat_kvdl_key(index);
 	return resmon_stat_lh_update(stat, stat->kvdl,
-				     &key.base, sizeof key, kvd_alloc);
+				     &key.base, sizeof(key), kvd_alloc);
 }
 
 static int resmon_stat_kvdl_free_1(struct resmon_stat *stat,
