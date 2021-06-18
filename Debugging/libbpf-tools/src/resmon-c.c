@@ -345,62 +345,21 @@ out:
 	return rc;
 }
 
-static bool resmon_c_handle_stats_response(struct json_object *j, int expect_id,
-					   struct json_object **ret_result,
-					   int *array_len)
+static void resmon_c_stats_print(struct resmon_jrpc_counter *counters,
+				 size_t num_counters)
 {
-	struct json_object *stats_result;
-	struct json_object *result;
-	char *error;
-
-	if (!resmon_c_handle_response(j, expect_id, json_type_object, &result))
-		return -1;
-
-	int err = resmon_jrpc_dissect_stats(result, &stats_result, array_len,
-					    &error);
-	if (err) {
-		fprintf(stderr, "Invalid counters object: %s\n", error);
-		free(error);
-		goto put_response;
-	}
-
-	if (json_object_get_type(stats_result) != json_type_array) {
-		fprintf(stderr, "Unexpected result type: %s expected, got %s\n",
-			json_type_to_name(json_type_array),
-			json_type_to_name(json_object_get_type(stats_result)));
-			goto put_response;
-	}
-
-	*ret_result = json_object_get(stats_result);
-	return true;
-
-put_response:
-	json_object_put(j);
-	return false;
-}
-
-static void resmon_c_stats_print(struct json_object *result, int len)
-{
-	struct json_object *value;
-
 	fprintf(stderr, "%-30s%s\n", "Resource", "Usage");
 
-	for (int i = 0; i < len; i++) {
-		struct json_object* obj = json_object_array_get_idx(result, i);
-
-		json_object_object_get_ex(obj, "descr", &value);
-		fprintf(stderr, "%-30s", json_object_get_string(value));
-		json_object_object_get_ex(obj, "value", &value);
-		fprintf(stderr, "%s\n", json_object_get_string(value));
-	}
+	for (size_t i = 0; i < num_counters; i++)
+		fprintf(stderr, "%-30s%" PRId64 "\n",
+			counters[i].descr, counters[i].value);
 }
 
 int resmon_c_stats(void)
 {
-	const int id = 1;
 	int err = 0;
-	int len;
 
+	const int id = 1;
 	struct json_object *request = resmon_jrpc_new_request(id, "stats");
 	if (request == NULL)
 		return -1;
@@ -412,18 +371,28 @@ int resmon_c_stats(void)
 	}
 
 	struct json_object *result;
-	if (!resmon_c_handle_stats_response(response, id, &result, &len)) {
+	if (!resmon_c_handle_response(response, id, json_type_object,
+				      &result)) {
 		err = -1;
 		goto put_response;
 	}
 
-	if (env.verbosity > 0)
-		fprintf(stderr, "resmond handled stats\n");
+	struct resmon_jrpc_counter *counters;
+	size_t num_counters;
+	char *error;
+	err = resmon_jrpc_dissect_stats(result, &counters, &num_counters,
+					&error);
+	if (err != 0) {
+		fprintf(stderr, "Invalid counters object: %s\n", error);
+		free(error);
+		goto put_result;
+	}
 
-	resmon_c_stats_print(result, len);
+	resmon_c_stats_print(counters, num_counters);
 
+	free(counters);
+put_result:
 	json_object_put(result);
-
 put_response:
 	json_object_put(response);
 put_request:
