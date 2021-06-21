@@ -6,10 +6,13 @@ export LIBBPF_OBJ := $(abspath $(LIBBPF_OUTPUT)/libbpf.a)
 export COMMON_OBJ := $(abspath common/libcommon.a)
 export COMMON_INCLUDE := -I$(abspath common)
 export top_srcdir := $(abspath .)
-DIRS = src
+DIRS = src resmon
 
 .PHONY: all
 all: $(DIRS)
+
+.PHONY: install
+install: resmon/install
 
 .PHONY: $(DIRS)
 $(DIRS): %: %/all

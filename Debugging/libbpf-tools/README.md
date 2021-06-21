@@ -18,6 +18,17 @@ $ git submodule update --init --recursive       # check out libbpf
 $ make
 ```
 
+## Installation
+
+The build system recognizes the `install` command and observes the usual
+conventions related to that, such as setting a prefix, or a staged-install
+directory:
+
+```shell
+$ make install PREFIX=${HOME}/opt/resmon
+$ make install PREFIX=/usr DESTDIR=${HOME}/tmp/
+```
+
 ## Further resources
 
 1. [BPF portability and CO-RE][3]

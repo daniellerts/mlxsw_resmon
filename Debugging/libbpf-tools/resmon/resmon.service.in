@@ -1,0 +1,8 @@
+[Unit]
+Description=mlxsw resource monitor
+
+[Service]
+Type=notify
+EnvironmentFile=-@SYSCONFDIR@/sysconfig/resmon
+ExecStart=@BINDIR@/resmon start $START_PARAMS
+ExecStop=@BINDIR@/resmon stop
