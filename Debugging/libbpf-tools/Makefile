@@ -11,6 +11,9 @@ DIRS = src resmon
 .PHONY: all
 all: $(DIRS)
 
+.PHONY: test
+test: resmon/test
+
 .PHONY: install
 install: resmon/install
 

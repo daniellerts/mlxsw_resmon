@@ -22,6 +22,9 @@ EXTRA_CLEAN :=			\
 	$(OUTPUT)/resmon.bpf.o	\
 	$(OUTPUT)/resmon.skel.h	\
 	#
+TESTS :=		\
+	test.sh		\
+	#
 
 BUILT := $(APPS) $(SYSTEMD_UNITS)
 
@@ -35,6 +38,13 @@ all: $(BUILT)
 install: $(BUILT)
 	$(call do_install_program,$(APPS),$(BINDIR))
 	$(call do_install_program,$(SYSTEMD_UNITS),$(SYSTEMDSYSTEMUNITDIR))
+
+.PHONY: test
+test: $(TESTS:%=run-%)
+
+run-%: % resmon
+	$(call msg,RUN,$*)
+	$(Q)./$*
 
 $(OUTPUT):
 	$(call msg,MKDIR,$@)
