@@ -7,6 +7,7 @@ resmon-OBJECTS :=		\
 	$(OUTPUT)/resmon-back.o	\
 	$(OUTPUT)/resmon-c.o	\
 	$(OUTPUT)/resmon-d.o	\
+	$(OUTPUT)/resmon-dl.o	\
 	$(OUTPUT)/resmon-jrpc.o	\
 	$(OUTPUT)/resmon-reg.o	\
 	$(OUTPUT)/resmon-sock.o	\
@@ -33,7 +34,8 @@ $(OUTPUT):
 	$(call msg,MKDIR,$@)
 	$(Q)mkdir -p $@
 
-resmon: CFLAGS += $(shell pkgconf --libs libelf json-c libsystemd)
+resmon: CFLAGS += $(shell pkgconf --libs libelf json-c libsystemd \
+		    libnl-3.0 libnl-genl-3.0)
 resmon: $(resmon-OBJECTS)
 	$(call msg,BINARY,$@)
 	$(Q)$(CC) $(CFLAGS) -lz $^ -o $@
@@ -41,6 +43,9 @@ resmon: $(resmon-OBJECTS)
 $(OUTPUT)/%.o: %.c resmon.h mlxsw.h $(COMMON_OBJ) | $(OUTPUT)
 	$(call msg,CC,$@)
 	$(Q)$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+
+$(OUTPUT)/resmon-dl.o: INCLUDES += $(shell pkgconf --cflags libnl-3.0 \
+				     libnl-genl-3.0)
 
 $(OUTPUT)/%: %.in | $(OUTPUT)
 	$(call msg,SED,$*)
