@@ -1,0 +1,8 @@
+[Unit]
+Description=mlxsw resource monitor exporter
+Requisite=resmon.service
+After=resmon.service
+
+[Service]
+EnvironmentFile=-@SYSCONFDIR@/sysconfig/resmon-exporter
+ExecStart=@BINDIR@/resmon-exporter.py $PARAMS

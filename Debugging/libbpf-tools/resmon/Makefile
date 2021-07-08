@@ -4,6 +4,7 @@ INCLUDES := $(COMMON_INCLUDE)
 CFLAGS := -g -Wall
 
 APPS := resmon
+EXTRA_BIN := resmon-exporter.py
 resmon-OBJECTS :=		\
 	$(OUTPUT)/resmon.o	\
 	$(OUTPUT)/resmon-back.o	\
@@ -17,6 +18,7 @@ resmon-OBJECTS :=		\
 	#
 SYSTEMD_UNITS :=				\
 	$(OUTPUT)/resmon.service		\
+	$(OUTPUT)/resmon-exporter.service	\
 	#
 EXTRA_CLEAN :=			\
 	$(OUTPUT)/resmon.bpf.o	\
@@ -35,8 +37,8 @@ include ../common.mk
 all: $(BUILT)
 
 .PHONY: install
-install: $(BUILT)
-	$(call do_install_program,$(APPS),$(BINDIR))
+install: $(BUILT) $(EXTRA_BIN)
+	$(call do_install_program,$(APPS) $(EXTRA_BIN),$(BINDIR))
 	$(call do_install_program,$(SYSTEMD_UNITS),$(SYSTEMDSYSTEMUNITDIR))
 
 .PHONY: test
