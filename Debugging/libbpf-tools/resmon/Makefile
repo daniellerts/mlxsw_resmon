@@ -8,6 +8,7 @@ resmon-OBJECTS :=		\
 	$(OUTPUT)/resmon-c.o	\
 	$(OUTPUT)/resmon-d.o	\
 	$(OUTPUT)/resmon-jrpc.o	\
+	$(OUTPUT)/resmon-reg.o	\
 	$(OUTPUT)/resmon-sock.o	\
 	$(OUTPUT)/resmon-stat.o	\
 	#
@@ -37,7 +38,7 @@ resmon: $(resmon-OBJECTS)
 	$(call msg,BINARY,$@)
 	$(Q)$(CC) $(CFLAGS) -lz $^ -o $@
 
-$(OUTPUT)/%.o: %.c resmon.h $(COMMON_OBJ) | $(OUTPUT)
+$(OUTPUT)/%.o: %.c resmon.h mlxsw.h $(COMMON_OBJ) | $(OUTPUT)
 	$(call msg,CC,$@)
 	$(Q)$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
