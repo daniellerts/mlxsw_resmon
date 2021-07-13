@@ -3,6 +3,8 @@ LIBBPF_SRC := libbpf/src
 export LIBBPF_OUTPUT := $(abspath .libbpf-output)
 export LIBBPF_INCLUDE := -I$(LIBBPF_OUTPUT)
 export LIBBPF_OBJ := $(abspath $(LIBBPF_OUTPUT)/libbpf.a)
+export COMMON_OBJ := $(abspath common/libcommon.a)
+export COMMON_INCLUDE := -I$(abspath common)
 export top_srcdir := $(abspath .)
 DIRS = src
 
@@ -15,7 +17,7 @@ $(DIRS): %: %/all
 define RECURSE_DIR
 $(1)/clean:
 	$(Q)$(MAKE) -C $$(@D) clean
-$(1)/%: $$(LIBBPF_OBJ)
+$(1)/%: $$(LIBBPF_OBJ) $$(COMMON_OBJ)
 	$(Q)$(MAKE) -C $$(@D) $$*
 endef
 
@@ -27,9 +29,9 @@ common/clean:
 	$(Q)$(MAKE) -C $(@D) clean
 
 .PHONY: clean
-clean: $(foreach dir,$(DIRS),$(dir)/clean)
+clean: $(foreach dir,$(DIRS) common,$(dir)/clean)
 	$(call msg,CLEAN)
-	$(Q)rm -rf $(LIBBPF_OUTPUT) $(APPS)
+	$(Q)rm -rf $(LIBBPF_OUTPUT)
 
 # Build libbpf
 $(LIBBPF_OBJ): $(wildcard $(LIBBPF_SRC)/*.[ch] $(LIBBPF_SRC)/Makefile) \
@@ -43,6 +45,9 @@ $(LIBBPF_OBJ): $(wildcard $(LIBBPF_SRC)/*.[ch] $(LIBBPF_SRC)/Makefile) \
 $(LIBBPF_OUTPUT)/libbpf:
 	$(call msg,MKDIR,$@)
 	$(Q)mkdir -p $@
+
+$(COMMON_OBJ): $(LIBBPF_OBJ)
+	$(Q)$(MAKE) -C $(@D) $(@F)
 
 # delete failed targets
 .DELETE_ON_ERROR:
