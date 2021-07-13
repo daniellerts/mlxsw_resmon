@@ -15,7 +15,6 @@ observability and debuggability of mlxsw. The tools are written using
 
 ```shell
 $ git submodule update --init --recursive       # check out libbpf
-$ cd src
 $ make
 ```
 
