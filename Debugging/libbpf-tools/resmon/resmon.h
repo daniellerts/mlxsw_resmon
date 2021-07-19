@@ -139,7 +139,8 @@ int resmon_c_stats(int argc, char **argv);
 	X(ATCAM, "ATCAM") \
 	X(ACTSET, "ACL Action Set") \
 	X(HOSTTAB_IPV4, "IPv4 Host Table") \
-	X(HOSTTAB_IPV6, "IPv6 Host Table")
+	X(HOSTTAB_IPV6, "IPv6 Host Table") \
+	X(ADJTAB, "Adjacency Table")
 
 enum resmon_counter {
 	RESMON_COUNTERS(RESMON_COUNTER_EXPAND_AS_ENUM)
