@@ -165,6 +165,26 @@ resmon_stat_rauht_key(enum mlxsw_reg_ralxx_protocol protocol,
 RESMON_STAT_KEY_HASH_FN(resmon_stat_rauht_hash, struct resmon_stat_rauht_key);
 RESMON_STAT_KEY_EQ_FN(resmon_stat_rauht_eq, struct resmon_stat_rauht_key);
 
+struct resmon_stat_svfa_key {
+	struct resmon_stat_key base;
+	uint16_t local_port;
+	uint8_t mapping_table;
+	uint16_t vid;
+};
+
+static struct resmon_stat_svfa_key
+resmon_stat_svfa_key(uint16_t local_port, uint8_t mapping_table, uint16_t vid)
+{
+	return (struct resmon_stat_svfa_key) {
+		.local_port = local_port,
+		.mapping_table = mapping_table,
+		.vid = vid,
+	};
+}
+
+RESMON_STAT_KEY_HASH_FN(resmon_stat_svfa_hash, struct resmon_stat_svfa_key);
+RESMON_STAT_KEY_EQ_FN(resmon_stat_svfa_eq, struct resmon_stat_svfa_key);
+
 struct resmon_stat {
 	struct resmon_stat_counters counters;
 	struct lh_table *ralue;
@@ -172,6 +192,7 @@ struct resmon_stat {
 	struct lh_table *ptce3;
 	struct lh_table *kvdl;
 	struct lh_table *rauht;
+	struct lh_table *svfa;
 };
 
 static struct resmon_stat_kvd_alloc *
@@ -194,6 +215,7 @@ struct resmon_stat *resmon_stat_create(void)
 	struct lh_table *ptar_tab;
 	struct lh_table *kvdl_tab;
 	struct lh_table *rauht_tab;
+	struct lh_table *svfa_tab;
 	struct resmon_stat *stat;
 
 	stat = malloc(sizeof(*stat));
@@ -230,15 +252,24 @@ struct resmon_stat *resmon_stat_create(void)
 	if (rauht_tab == NULL)
 		goto free_kvdl_tab;
 
+	svfa_tab = lh_table_new(1, resmon_stat_entry_free,
+				resmon_stat_svfa_hash,
+				resmon_stat_svfa_eq);
+	if (svfa_tab == NULL)
+		goto free_rauht_tab;
+
 	*stat = (struct resmon_stat){
 		.ralue = ralue_tab,
 		.ptar = ptar_tab,
 		.ptce3 = ptce3_tab,
 		.kvdl = kvdl_tab,
 		.rauht = rauht_tab,
+		.svfa = svfa_tab,
 	};
 	return stat;
 
+free_rauht_tab:
+	lh_table_free(rauht_tab);
 free_kvdl_tab:
 	lh_table_free(kvdl_tab);
 free_ptce3_tab:
@@ -254,6 +285,7 @@ free_stat:
 
 void resmon_stat_destroy(struct resmon_stat *stat)
 {
+	lh_table_free(stat->svfa);
 	lh_table_free(stat->rauht);
 	lh_table_free(stat->kvdl);
 	lh_table_free(stat->ptce3);
@@ -575,4 +607,24 @@ int resmon_stat_kvdl_free(struct resmon_stat *stat,
 	}
 
 	return rc;
+}
+
+int resmon_stat_svfa_update(struct resmon_stat *stat, uint16_t local_port,
+			    uint8_t mapping_table, uint16_t vid,
+			    struct resmon_stat_kvd_alloc kvd_alloc)
+{
+	struct resmon_stat_svfa_key key =
+		resmon_stat_svfa_key(local_port, mapping_table, vid);
+
+	return resmon_stat_lh_update(stat, stat->svfa,
+				     &key.base, sizeof(key), kvd_alloc);
+}
+
+int resmon_stat_svfa_delete(struct resmon_stat *stat, uint16_t local_port,
+			    uint8_t mapping_table, uint16_t vid)
+{
+	struct resmon_stat_svfa_key key =
+		resmon_stat_svfa_key(local_port, mapping_table, vid);
+
+	return resmon_stat_lh_delete(stat, stat->svfa, &key.base);
 }

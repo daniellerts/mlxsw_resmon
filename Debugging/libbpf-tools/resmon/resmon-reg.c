@@ -212,6 +212,35 @@ struct resmon_reg_ratr {
 	 resmon_reg_ratr_adj_index_low(reg))
 };
 
+struct resmon_reg_svfa {
+	uint8_t __swid;
+	uint8_t __local_port;
+	uint8_t __local_port_msb_mapping_table;
+	uint8_t __tport_v;
+
+#define resmon_reg_svfa_mapping_table(reg) \
+	((reg)->__local_port_msb_mapping_table & 0x07)
+#define resmon_reg_svfa_local_port_msb(reg) \
+	(((reg)->__local_port_msb_mapping_table & 0xf0) >> 4)
+#define resmon_reg_svfa_local_port(reg)\
+	((resmon_reg_svfa_local_port_msb(reg) << (uint16_t)8) | \
+	 (reg)->__local_port)
+#define resmon_reg_svfa_v(reg) ((reg)->__tport_v & 1)
+
+	uint16_be_t __fid;
+	uint16_be_t __vid;
+
+#define resmon_reg_svfa_vid(reg) (uint16_be_toh((reg)->__vid) & 0x0fff)
+
+	uint32_be_t __counter_set_type_index;
+	uint8_t __trap_action;
+	uint8_t resv1;
+	uint16_be_t __trap_id;
+	uint32_be_t __vni;
+
+#define resmon_reg_svfa_vni(reg) (uint32_be_toh((reg)->__vni) & 0x00ffff)
+};
+
 static struct resmon_reg_emad_tl
 resmon_reg_emad_decode_tl(uint16_be_t type_len_be)
 {
@@ -561,6 +590,54 @@ oob:
 	return -1;
 }
 
+static int resmon_reg_handle_svfa(struct resmon_stat *stat,
+				  const uint8_t *payload, size_t payload_len,
+				  char **error)
+{
+	const struct resmon_reg_svfa *reg;
+	struct resmon_stat_kvd_alloc kvda;
+	enum resmon_counter counter;
+	uint8_t mapping_table;
+	uint16_t local_port;
+	uint16_t vid;
+	int rc;
+
+	reg = RESMON_REG_READ(sizeof(*reg), payload, payload_len);
+
+	mapping_table = resmon_reg_svfa_mapping_table(reg);
+	local_port = resmon_reg_svfa_local_port(reg);
+	vid = resmon_reg_svfa_vid(reg);
+
+	if (!resmon_reg_svfa_v(reg)) {
+		rc = resmon_stat_svfa_delete(stat, local_port, mapping_table,
+					     vid);
+		return resmon_reg_delete_rc(rc, error);
+	}
+
+	switch (mapping_table) {
+	case 0:
+		counter = RESMON_COUNTER_VID2FID;
+	case 1:
+		counter = RESMON_COUNTER_RQ_VID2FID;
+	case 2:
+		break;
+	default:
+		return 0;
+	}
+
+	kvda = (struct resmon_stat_kvd_alloc) {
+		.slots = 1,
+		.counter = counter,
+	};
+	rc = resmon_stat_svfa_update(stat, local_port, mapping_table, vid,
+				     kvda);
+	return resmon_reg_insert_rc(rc, error);
+
+oob:
+	resmon_reg_err_payload_truncated(error);
+	return -1;
+}
+
 int resmon_reg_process_emad(struct resmon_stat *stat,
 			    const uint8_t *buf, size_t len, char **error)
 {
@@ -605,6 +682,8 @@ int resmon_reg_process_emad(struct resmon_stat *stat,
 		return resmon_reg_handle_rauht(stat, buf, len, error);
 	case MLXSW_REG_RATR_ID:
 		return resmon_reg_handle_ratr(stat, buf, len, error);
+	case MLXSW_REG_SVFA_ID:
+		return resmon_reg_handle_svfa(stat, buf, len, error);
 	}
 
 	resmon_fmterr(error, "EMAD malformed: Unknown register");

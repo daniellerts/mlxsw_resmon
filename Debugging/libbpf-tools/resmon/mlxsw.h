@@ -123,3 +123,5 @@ enum mlxsw_reg_ratr_op {
 	 */
 	MLXSW_REG_RATR_OP_WRITE_WRITE_ENTRY_ON_ACTIVITY = 3,
 };
+
+#define MLXSW_REG_SVFA_ID 0x201C

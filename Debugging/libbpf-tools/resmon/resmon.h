@@ -140,7 +140,9 @@ int resmon_c_stats(int argc, char **argv);
 	X(ACTSET, "ACL Action Set") \
 	X(HOSTTAB_IPV4, "IPv4 Host Table") \
 	X(HOSTTAB_IPV6, "IPv6 Host Table") \
-	X(ADJTAB, "Adjacency Table")
+	X(ADJTAB, "Adjacency Table") \
+	X(VID2FID, "VID to FID Table") \
+	X(RQ_VID2FID, "RQ VID to FID Table")
 
 enum resmon_counter {
 	RESMON_COUNTERS(RESMON_COUNTER_EXPAND_AS_ENUM)
@@ -229,6 +231,12 @@ int resmon_stat_rauht_delete(struct resmon_stat *stat,
 			     enum mlxsw_reg_ralxx_protocol protocol,
 			     uint16_t rif,
 			     struct resmon_stat_dip dip);
+
+int resmon_stat_svfa_update(struct resmon_stat *stat, uint16_t local_port,
+			    uint8_t mapping_table, uint16_t vid,
+			    struct resmon_stat_kvd_alloc kvd_alloc);
+int resmon_stat_svfa_delete(struct resmon_stat *stat, uint16_t local_port,
+			    uint8_t mapping_table, uint16_t vid);
 
 /* resmon-dl.c */
 

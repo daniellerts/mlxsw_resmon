@@ -122,6 +122,7 @@ int BPF_PROG(handle__devlink_hwmsg,
 	case 0x3804: /* MLXSW_REG_IEDR_ID */
 	case 0x8014: /* MLXSW_REG_RAUHT_ID */
 	case 0x8008: /* MLXSW_REG_RATR_ID */
+	case 0x201C: /* MLXSW_REG_SVFA_ID */
 		return push_to_ringbuf(buf, len);
 	};
 	return 0;
