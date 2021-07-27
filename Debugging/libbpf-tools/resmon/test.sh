@@ -390,6 +390,66 @@ resmon_stats_test \
 
 test_iedr_reg_tlv "21" "010002" ADJTAB -1
 
+############### SVFA - add VID to FID table ################
+reg_id="201C"
+
+reg_tlv="18050000\
+0000"
+
+mapping_table="00"
+valid="01"
+svfa_payload="140000010000000000000000"
+
+reg_tlv=$reg_tlv$mapping_table$valid$svfa_payload
+
+#resmon_stats_test \
+#	$(op_tlv_get $reg_id)$string_tlv$reg_tlv$end_tlv VID2FID 1
+
+############## SVFA - delete VID to FID table ##############
+reg_id="201C"
+
+reg_tlv="18050000\
+0000"
+
+mapping_table="00"
+valid="00"
+svfa_payload="140000010000000000000000"
+
+reg_tlv=$reg_tlv$mapping_table$valid$svfa_payload
+
+#resmon_stats_test \
+#	$(op_tlv_get $reg_id)$string_tlv$reg_tlv$end_tlv VID2FID -1
+
+############## SVFA - add RQ VID to FID table ##############
+reg_id="201C"
+
+reg_tlv="18050000\
+0032"
+
+mapping_table="01"
+valid="01"
+svfa_payload="140000010000000000000000"
+
+reg_tlv=$reg_tlv$mapping_table$valid$svfa_payload
+
+resmon_stats_test \
+	$(op_tlv_get $reg_id)$string_tlv$reg_tlv$end_tlv RQ_VID2FID 1
+
+############# SVFA - delete RQ VID to FID table ############
+reg_id="201C"
+
+reg_tlv="18050000\
+0032"
+
+mapping_table="01"
+valid="00"
+svfa_payload="140000010000000000000000"
+
+reg_tlv=$reg_tlv$mapping_table$valid$svfa_payload
+
+resmon_stats_test \
+	$(op_tlv_get $reg_id)$string_tlv$reg_tlv$end_tlv RQ_VID2FID -1
+
 ####################### Stop resmon #######################
 $RESMON stop 2&> /dev/null
 exit $EXIT_STATUS
